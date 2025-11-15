@@ -17,6 +17,7 @@
 - **Transparent Proxy**: Forward all `/v1/*` endpoints (chat, completions, etc.) to LM Studio
 - **Security**: API key authentication and IP/CIDR-based access control
 - **Model Management**: Use LM Studio Python SDK for advanced model control
+- **Real-time Debugging**: SSE endpoints for live model loading progress and inference monitoring
 - **Production-Ready**: Proper error handling, logging, startup/shutdown lifecycle
 
 ## Repository Structure
@@ -31,6 +32,7 @@ lmstudio-lan-api/
 │       ├── middleware.py         # API key & IP allowlist middleware
 │       ├── dependencies.py       # Shared httpx client & LM Studio SDK
 │       ├── admin_models.py       # /admin router for model management
+│       ├── debug.py              # /debug router for real-time debugging
 │       ├── proxy.py              # /v1 proxy router
 │       └── main.py               # FastAPI app assembly
 ├── tests/
@@ -166,6 +168,11 @@ Follow conventional commits:
 - `POST /admin/models/load` - Load model with configuration
 - `POST /admin/models/unload` - Unload model
 - `POST /admin/models/activate` - Set active default model
+
+#### Debug Endpoints (`/debug`)
+- `GET /debug/stream` - Server-Sent Events stream for real-time debug info
+- `GET /debug/status` - Current status snapshot (loading/inference state)
+- `GET /debug/metrics` - Performance metrics (tokens/sec, memory usage, etc.)
 
 #### Proxy Endpoints (`/v1/*`)
 - All OpenAI-compatible endpoints: `/v1/chat/completions`, `/v1/completions`, etc.
@@ -396,6 +403,182 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 ```
 
+### Debug API Implementation Pattern
+
+**Server-Sent Events (SSE) for Real-time Updates:**
+```python
+import asyncio
+import json
+from datetime import datetime
+from typing import AsyncGenerator, Dict, Any
+from fastapi import APIRouter, Request
+from sse_starlette.sse import EventSourceResponse
+
+router = APIRouter(prefix="/debug", tags=["debug"])
+
+# Global event queue for broadcasting debug events
+debug_event_queue: asyncio.Queue = asyncio.Queue()
+
+
+async def debug_event_generator() -> AsyncGenerator[Dict[str, Any], None]:
+    """
+    Generator that yields debug events from the queue.
+    Clients connect and receive all events in real-time.
+    """
+    while True:
+        event = await debug_event_queue.get()
+        yield event
+
+
+@router.get("/stream")
+async def stream_debug_events(request: Request) -> EventSourceResponse:
+    """
+    SSE endpoint for real-time debug information.
+    Streams model loading progress and inference metrics.
+    """
+    async def event_stream():
+        try:
+            # Send initial connection event
+            yield {
+                "event": "connected",
+                "data": json.dumps({
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "message": "Debug stream connected"
+                })
+            }
+
+            # Stream debug events
+            async for event in debug_event_generator():
+                # Check if client is still connected
+                if await request.is_disconnected():
+                    break
+
+                yield {
+                    "event": event.get("type", "debug"),
+                    "data": json.dumps(event.get("data", {}))
+                }
+        except asyncio.CancelledError:
+            pass
+
+    return EventSourceResponse(event_stream())
+
+
+# Helper function to broadcast events (called from other modules)
+async def broadcast_debug_event(event_type: str, data: Dict[str, Any]) -> None:
+    """
+    Broadcast a debug event to all connected SSE clients.
+
+    Args:
+        event_type: Type of event (model_load_start, inference_progress, etc.)
+        data: Event data dictionary
+    """
+    await debug_event_queue.put({
+        "type": event_type,
+        "data": {
+            **data,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+    })
+```
+
+**Status Tracking with Application State:**
+```python
+from typing import Optional, Dict, Any, List
+from pydantic import BaseModel
+from datetime import datetime
+
+class OperationInfo(BaseModel):
+    type: Optional[str] = None  # "model_load" | "inference"
+    model_key: Optional[str] = None
+    progress: float = 0.0
+    started_at: Optional[datetime] = None
+    elapsed_ms: Optional[int] = None
+
+
+class DebugState(BaseModel):
+    status: str = "idle"  # "idle" | "loading_model" | "processing_inference" | "error"
+    current_operation: Optional[OperationInfo] = None
+    recent_requests: List[Dict[str, Any]] = []
+    total_requests: int = 0
+    total_errors: int = 0
+
+
+@router.get("/status")
+async def get_debug_status(request: Request) -> Dict[str, Any]:
+    """
+    Get current debug status snapshot.
+    """
+    debug_state: DebugState = getattr(
+        request.app.state, "debug_state", DebugState()
+    )
+    active_model = getattr(request.app.state, "active_model", {})
+
+    return {
+        "status": debug_state.status,
+        "current_operation": (
+            debug_state.current_operation.dict()
+            if debug_state.current_operation
+            else None
+        ),
+        "active_model": active_model,
+        "recent_requests": debug_state.recent_requests[-10:],  # Last 10
+    }
+```
+
+**Integration with Model Loading:**
+```python
+# In admin_models.py - integrate debug events into load_model
+
+async def load_model(payload: LoadModelRequest, request: Request):
+    # ... existing code ...
+
+    # Broadcast load start event
+    await broadcast_debug_event("model_load_start", {
+        "model_key": payload.model_key,
+        "instance_id": payload.instance_id
+    })
+
+    # Update state
+    debug_state = getattr(request.app.state, "debug_state", DebugState())
+    debug_state.status = "loading_model"
+    debug_state.current_operation = OperationInfo(
+        type="model_load",
+        model_key=payload.model_key,
+        started_at=datetime.utcnow()
+    )
+
+    try:
+        # Actual model loading with progress updates
+        model = await load_model_with_progress(
+            payload.model_key,
+            config_dict,
+            progress_callback=lambda progress, stage: asyncio.create_task(
+                broadcast_debug_event("model_load_progress", {
+                    "model_key": payload.model_key,
+                    "progress": progress,
+                    "stage": stage
+                })
+            )
+        )
+
+        # Broadcast completion
+        await broadcast_debug_event("model_load_complete", {
+            "model_key": payload.model_key,
+            "total_time_ms": (datetime.utcnow() - debug_state.current_operation.started_at).total_seconds() * 1000
+        })
+
+        debug_state.status = "idle"
+        debug_state.current_operation = None
+
+    except Exception as e:
+        await broadcast_debug_event("error", {
+            "error": "Model load failed",
+            "details": str(e)
+        })
+        debug_state.status = "error"
+        raise
+```
+
 ## Testing Standards
 
 ### Test Structure
@@ -578,6 +761,216 @@ Body:
 }
 ```
 
+### Debug API (Real-time Monitoring)
+
+#### Stream Debug Events (SSE)
+```http
+GET /debug/stream
+Headers:
+  X-API-Key: your-secret-key
+  Accept: text/event-stream
+
+Response: Server-Sent Events stream
+event: model_load_start
+data: {"model_key": "qwen2.5-7b-instruct", "timestamp": "2025-11-15T10:30:00Z"}
+
+event: model_load_progress
+data: {"progress": 0.25, "stage": "loading_weights", "memory_used_mb": 2048}
+
+event: model_load_progress
+data: {"progress": 0.75, "stage": "initializing_gpu", "memory_used_mb": 4096}
+
+event: model_load_complete
+data: {"model_key": "qwen2.5-7b-instruct", "total_time_ms": 5432, "memory_used_mb": 6144}
+
+event: inference_start
+data: {"request_id": "abc123", "prompt_tokens": 45, "timestamp": "2025-11-15T10:31:00Z"}
+
+event: inference_progress
+data: {"request_id": "abc123", "tokens_generated": 20, "tokens_per_sec": 15.2}
+
+event: inference_complete
+data: {"request_id": "abc123", "total_tokens": 120, "total_time_ms": 7890, "avg_tokens_per_sec": 15.2}
+
+event: error
+data: {"error": "Model load failed", "details": "Insufficient GPU memory"}
+```
+
+#### Get Current Status
+```http
+GET /debug/status
+Headers:
+  X-API-Key: your-secret-key
+
+Response: 200 OK
+{
+  "status": "idle" | "loading_model" | "processing_inference" | "error",
+  "current_operation": {
+    "type": "model_load" | "inference" | null,
+    "model_key": "qwen2.5-7b-instruct",
+    "progress": 0.75,
+    "started_at": "2025-11-15T10:30:00Z",
+    "elapsed_ms": 4532
+  },
+  "active_model": {
+    "model_key": "qwen2.5-7b-instruct",
+    "instance_id": "primary-qwen",
+    "loaded_at": "2025-11-15T10:29:00Z",
+    "memory_used_mb": 6144
+  },
+  "recent_requests": [
+    {
+      "request_id": "abc123",
+      "status": "completed",
+      "tokens_generated": 120,
+      "time_ms": 7890
+    }
+  ]
+}
+```
+
+#### Get Performance Metrics
+```http
+GET /debug/metrics
+Headers:
+  X-API-Key: your-secret-key
+
+Response: 200 OK
+{
+  "model_info": {
+    "model_key": "qwen2.5-7b-instruct",
+    "context_length": 8192,
+    "memory_used_mb": 6144,
+    "gpu_layers": 35
+  },
+  "performance": {
+    "avg_tokens_per_sec": 15.2,
+    "total_requests": 45,
+    "total_tokens_generated": 5400,
+    "uptime_seconds": 3600
+  },
+  "system": {
+    "cpu_percent": 12.5,
+    "ram_used_mb": 8192,
+    "gpu_memory_used_mb": 6144,
+    "gpu_utilization_percent": 85.0
+  },
+  "errors": {
+    "total_errors": 2,
+    "last_error": {
+      "timestamp": "2025-11-15T09:45:00Z",
+      "message": "Request timeout"
+    }
+  }
+}
+```
+
+#### Client Usage Examples
+
+**JavaScript/TypeScript (Browser or Node.js):**
+```typescript
+// Connect to debug stream
+const eventSource = new EventSource('http://192.168.0.10:8001/debug/stream', {
+  headers: {
+    'X-API-Key': 'your-secret-key'
+  }
+});
+
+eventSource.addEventListener('model_load_start', (event) => {
+  const data = JSON.parse(event.data);
+  console.log('Model loading started:', data.model_key);
+});
+
+eventSource.addEventListener('model_load_progress', (event) => {
+  const data = JSON.parse(event.data);
+  console.log(`Loading progress: ${(data.progress * 100).toFixed(1)}%`);
+  console.log(`Stage: ${data.stage}, Memory: ${data.memory_used_mb}MB`);
+});
+
+eventSource.addEventListener('model_load_complete', (event) => {
+  const data = JSON.parse(event.data);
+  console.log(`Model loaded in ${data.total_time_ms}ms`);
+});
+
+eventSource.addEventListener('inference_progress', (event) => {
+  const data = JSON.parse(event.data);
+  console.log(`Generating: ${data.tokens_generated} tokens at ${data.tokens_per_sec} t/s`);
+});
+
+eventSource.addEventListener('error', (event) => {
+  const data = JSON.parse(event.data);
+  console.error('Error:', data.error, data.details);
+});
+
+// Polling status endpoint
+async function checkStatus() {
+  const response = await fetch('http://192.168.0.10:8001/debug/status', {
+    headers: { 'X-API-Key': 'your-secret-key' }
+  });
+  const status = await response.json();
+  console.log('Current status:', status.status);
+  console.log('Active model:', status.active_model?.model_key);
+}
+```
+
+**Python Client:**
+```python
+import requests
+import sseclient
+import json
+
+# SSE streaming
+def stream_debug_events():
+    headers = {'X-API-Key': 'your-secret-key'}
+    response = requests.get(
+        'http://192.168.0.10:8001/debug/stream',
+        headers=headers,
+        stream=True
+    )
+
+    client = sseclient.SSEClient(response)
+    for event in client.events():
+        data = json.loads(event.data)
+        print(f"Event: {event.event}")
+        print(f"Data: {data}")
+
+        if event.event == 'model_load_progress':
+            progress = data.get('progress', 0)
+            print(f"Progress: {progress * 100:.1f}%")
+
+# Polling status
+def get_current_status():
+    headers = {'X-API-Key': 'your-secret-key'}
+    response = requests.get(
+        'http://192.168.0.10:8001/debug/status',
+        headers=headers
+    )
+    status = response.json()
+    print(f"Status: {status['status']}")
+    if status['current_operation']:
+        op = status['current_operation']
+        print(f"Operation: {op['type']} - {op['progress'] * 100:.1f}%")
+
+if __name__ == '__main__':
+    # Run in separate thread or async
+    stream_debug_events()
+```
+
+**curl (Testing):**
+```bash
+# Stream debug events
+curl -N -H "X-API-Key: your-secret-key" \
+  http://192.168.0.10:8001/debug/stream
+
+# Get current status
+curl -H "X-API-Key: your-secret-key" \
+  http://192.168.0.10:8001/debug/status | jq
+
+# Get performance metrics
+curl -H "X-API-Key: your-secret-key" \
+  http://192.168.0.10:8001/debug/metrics | jq
+```
+
 ## Security Best Practices
 
 ### Critical Security Rules
@@ -634,7 +1027,13 @@ lmstudio-python>=0.1.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 python-dotenv>=1.0.0
+sse-starlette>=1.8.2
+psutil>=5.9.0
 ```
+
+**Dependency Notes:**
+- `sse-starlette`: Server-Sent Events support for real-time debug streaming
+- `psutil`: System metrics (CPU, memory, GPU monitoring) for `/debug/metrics`
 
 ### Development Dependencies (optional `requirements-dev.txt`)
 
@@ -925,24 +1324,29 @@ When implementing features:
 
 ### Latest Update
 - **Date**: 2025-11-15
-- **Version**: 1.0.0
-- **Status**: Production-ready specification integrated
+- **Version**: 1.1.0
+- **Status**: Production-ready specification with real-time debugging
 - **Changes**:
   - Complete rewrite from Node.js/TypeScript to Python/FastAPI
   - Added production-ready architecture based on official specification
+  - **NEW**: Real-time debugging API with Server-Sent Events
+  - **NEW**: Debug endpoints for model loading progress and inference monitoring
+  - **NEW**: Performance metrics endpoint with system resource tracking
   - Detailed security, middleware, and proxy implementation guidelines
-  - Comprehensive code examples and patterns
+  - Comprehensive code examples and patterns (including SSE implementation)
   - Docker deployment configuration
   - Enhanced testing and debugging sections
+  - Client usage examples (JavaScript, Python, curl)
 
 ### Next Steps
 1. Initialize Python package structure
 2. Implement core modules (settings, logging, middleware)
 3. Create admin API endpoints
-4. Implement proxy router
-5. Add comprehensive tests
-6. Create Docker setup
-7. Write comprehensive README.md
+4. Implement debug API with SSE streaming
+5. Implement proxy router with inference monitoring
+6. Add comprehensive tests (including SSE testing)
+7. Create Docker setup
+8. Write comprehensive README.md
 
 ---
 
