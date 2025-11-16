@@ -5,14 +5,19 @@ Provides endpoints to load, unload, activate, and list models.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from .dependencies import get_active_model, get_http_client, lm_client
+from .dependencies import get_active_model, get_debug_state, get_http_client
+from .lm_studio_client import get_lm_studio_client
+from .debug import broadcast_debug_event
 
 logger = logging.getLogger("lmstudio_gateway.admin")
 
@@ -155,35 +160,50 @@ class ActivateModelResponse(BaseModel):
 
 
 @router.get("/models")
-async def list_models(
-    http_client: httpx.AsyncClient = Depends(get_http_client),
-) -> Dict[str, Any]:
+async def list_models() -> Dict[str, Any]:
     """
-    List available models from LM Studio.
+    List available models from LM Studio via SDK.
 
     Returns:
-        Dictionary containing available models
+        Dictionary containing loaded and downloaded models
 
     Raises:
         HTTPException: If LM Studio is unreachable or returns an error
     """
     try:
-        resp = await http_client.get("/api/v0/models")
-        resp.raise_for_status()
-    except httpx.RequestError as e:
-        logger.exception("Error connecting to LM Studio: %s", e)
+        logger.info("Fetching model list from LM Studio SDK")
+
+        client_service = get_lm_studio_client()
+        client = await client_service.get_client()
+
+        # Get both loaded and downloaded models using SDK
+        loaded_models = await asyncio.to_thread(client.llm.list_loaded)
+        downloaded_models = await asyncio.to_thread(client.system.list_downloaded_models)
+
+        return {
+            "loaded": [
+                {
+                    "path": model.path,
+                    "identifier": getattr(model, "identifier", None)
+                }
+                for model in loaded_models
+            ],
+            "downloaded": [
+                {
+                    "path": model.path,
+                    "size": getattr(model, "size_bytes", 0),
+                    "type": getattr(model, "type", "unknown")
+                }
+                for model in downloaded_models
+            ]
+        }
+
+    except Exception as error:
+        logger.exception("Error fetching models via SDK: %s", error)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="LM Studio API unreachable",
-        ) from e
-    except httpx.HTTPStatusError as e:
-        logger.exception("LM Studio returned error: %s", e)
-        raise HTTPException(
-            status_code=e.response.status_code,
-            detail="LM Studio returned error",
-        ) from e
-
-    return resp.json()
+            detail=f"LM Studio SDK error: {str(error)}",
+        ) from error
 
 
 @router.post("/models/load", response_model=LoadModelResponse)
@@ -204,6 +224,9 @@ async def load_model(
     Raises:
         HTTPException: If model loading fails
     """
+    start_time = time.time()
+    debug_state = get_debug_state(request)
+
     logger.info(
         "Loading model_key=%s instance_id=%s ttl=%s",
         payload.model_key,
@@ -219,27 +242,76 @@ async def load_model(
     )
     ttl = payload.ttl_seconds
 
+    # Update debug state
+    debug_state["status"] = "loading_model"
+    debug_state["current_operation"] = {
+        "type": "model_load",
+        "model_key": payload.model_key,
+        "progress": 0,
+        "started_at": datetime.utcnow().isoformat() + "Z"
+    }
+
+    # Broadcast load start event
+    await broadcast_debug_event("model_load_start", {
+        "model_key": payload.model_key,
+        "instance_id": payload.instance_id,
+        "load_config": config_dict
+    })
+
     # Load model via LM Studio SDK
     try:
+        client_service = get_lm_studio_client()
+        client = await client_service.get_client()
+
+        # Load model using SDK
         if payload.instance_id:
-            # Load specific instance
-            model = lm_client.llm.load_new_instance(
+            # Load with specific instance ID
+            model = await asyncio.to_thread(
+                client.llm.load,
                 payload.model_key,
-                payload.instance_id,
-                config=config_dict if config_dict else None,
-                ttl=ttl,
+                identifier=payload.instance_id,
+                config=config_dict if config_dict else None
             )
         else:
-            # Load or reuse default instance
-            model = lm_client.llm(
+            # Load default instance
+            model = await asyncio.to_thread(
+                client.llm.load,
                 payload.model_key,
-                config=config_dict if config_dict else None,
-                ttl=ttl,
+                config=config_dict if config_dict else None
             )
 
-        logger.info("Model loaded successfully: %s", payload.model_key)
+        logger.info("Model loaded successfully via SDK: %s", payload.model_key)
+
+        # Update debug state
+        debug_state["status"] = "idle"
+        debug_state["current_operation"] = None
+
+        total_time_ms = int((time.time() - start_time) * 1000)
+
+        # Broadcast completion event
+        await broadcast_debug_event("model_load_complete", {
+            "model_key": payload.model_key,
+            "instance_id": payload.instance_id,
+            "activated": payload.activate,
+            "total_time_ms": total_time_ms,
+            "load_config": config_dict
+        })
+
     except Exception as e:
-        logger.exception("Failed to load model: %s", e)
+        debug_state["status"] = "error"
+        debug_state["total_errors"] = debug_state.get("total_errors", 0) + 1
+
+        total_time_ms = int((time.time() - start_time) * 1000)
+
+        logger.exception("Failed to load model via SDK: %s", e)
+
+        await broadcast_debug_event("error", {
+            "operation": "model_load",
+            "model_key": payload.model_key,
+            "error": str(e),
+            "total_time_ms": total_time_ms
+        })
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load model: {str(e)}",
@@ -289,6 +361,9 @@ async def unload_model(
     Raises:
         HTTPException: If unload fails or no model specified
     """
+    start_time = time.time()
+    debug_state = get_debug_state(request)
+
     model_key = payload.model_key
     instance_id = payload.instance_id
 
@@ -309,13 +384,86 @@ async def unload_model(
         instance_id,
     )
 
+    # Update debug state
+    debug_state["status"] = "loading_model"  # Using loading_model for any model operation
+    debug_state["current_operation"] = {
+        "type": "model_unload",
+        "model_key": model_key,
+        "progress": 0,
+        "started_at": datetime.utcnow().isoformat() + "Z"
+    }
+
+    # Broadcast unload start event
+    await broadcast_debug_event("model_unload_start", {
+        "model_key": model_key,
+        "instance_id": instance_id
+    })
+
     try:
-        # Get model reference and unload
-        model = lm_client.llm(model_key)
-        model.unload()
-        logger.info("Model unloaded successfully: %s", model_key)
+        client_service = get_lm_studio_client()
+        client = await client_service.get_client()
+
+        # Find and unload the model
+        loaded_models = await asyncio.to_thread(client.llm.list_loaded)
+
+        model_to_unload = None
+        for model in loaded_models:
+            if instance_id:
+                # Match by instance ID
+                if getattr(model, "identifier", None) == instance_id:
+                    model_to_unload = model
+                    break
+            else:
+                # Match by path
+                if model.path == model_key:
+                    model_to_unload = model
+                    break
+
+        if not model_to_unload:
+            not_found_msg = f"Model not found: {model_key}"
+            if instance_id:
+                not_found_msg += f" (instance: {instance_id})"
+
+            logger.warning(not_found_msg)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=not_found_msg
+            )
+
+        # Unload the model
+        await asyncio.to_thread(model_to_unload.unload)
+        logger.info("Model unloaded successfully via SDK: %s", model_key)
+
+        # Update debug state
+        debug_state["status"] = "idle"
+        debug_state["current_operation"] = None
+
+        total_time_ms = int((time.time() - start_time) * 1000)
+
+        # Broadcast completion event
+        await broadcast_debug_event("model_unload_complete", {
+            "model_key": model_key,
+            "instance_id": instance_id,
+            "total_time_ms": total_time_ms
+        })
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("Failed to unload model: %s", e)
+        debug_state["status"] = "error"
+        debug_state["total_errors"] = debug_state.get("total_errors", 0) + 1
+
+        total_time_ms = int((time.time() - start_time) * 1000)
+
+        logger.exception("Failed to unload model via SDK: %s", e)
+
+        await broadcast_debug_event("error", {
+            "operation": "model_unload",
+            "model_key": model_key,
+            "error": str(e),
+            "total_time_ms": total_time_ms
+        })
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to unload model: {str(e)}",
@@ -323,10 +471,11 @@ async def unload_model(
 
     # Clear active model if it was the unloaded one
     if app_active_model.get("model_key") == model_key:
-        app_active_model["model_key"] = None
-        app_active_model["instance_id"] = None
-        app_active_model["default_inference"] = {}
-        logger.info("Cleared active model state")
+        if not instance_id or app_active_model.get("instance_id") == instance_id:
+            app_active_model["model_key"] = None
+            app_active_model["instance_id"] = None
+            app_active_model["default_inference"] = {}
+            logger.info("Cleared active model state")
 
     return UnloadModelResponse(
         status="unloaded",
@@ -360,15 +509,24 @@ async def activate_model(
     )
 
     active_model = get_active_model(request)
+
+    default_inference = (
+        payload.default_inference.model_dump(exclude_unset=True)
+        if payload.default_inference
+        else {}
+    )
+
+    # Broadcast activation event
+    await broadcast_debug_event("model_activate", {
+        "model_key": payload.model_key,
+        "instance_id": payload.instance_id,
+        "default_inference": default_inference
+    })
+
+    # Update active model state
     active_model["model_key"] = payload.model_key
     active_model["instance_id"] = payload.instance_id
-
-    if payload.default_inference:
-        active_model["default_inference"] = payload.default_inference.model_dump(
-            exclude_unset=True
-        )
-    else:
-        active_model["default_inference"] = {}
+    active_model["default_inference"] = default_inference
 
     logger.info("Model activated: %s", payload.model_key)
 
@@ -376,5 +534,5 @@ async def activate_model(
         status="activated",
         model_key=payload.model_key,
         instance_id=payload.instance_id,
-        default_inference=active_model.get("default_inference", {}),
+        default_inference=default_inference,
     )

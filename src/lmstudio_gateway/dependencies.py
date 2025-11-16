@@ -9,16 +9,14 @@ import logging
 from typing import Any, Dict
 
 import httpx
-import lmstudio as lms
 from fastapi import FastAPI, Request
 
 from .settings import settings
 
 logger = logging.getLogger("lmstudio_gateway.dependencies")
 
-
-# LM Studio Python client (global; SDK manages its own resources)
-lm_client = lms.get_default_client()
+# Note: LM Studio SDK client is now managed via LMStudioClientService singleton
+# Import and use: from .lm_studio_client import get_lm_studio_client
 
 
 async def create_http_client(app: FastAPI) -> None:
