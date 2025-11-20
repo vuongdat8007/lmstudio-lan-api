@@ -1,52 +1,69 @@
-# CLAUDE.md - AI Assistant Guide for lmstudio-lan-api
+# CLAUDE.md - AI Assistant Guide for llama-server LAN Gateway
+
+> **IMPORTANT ARCHITECTURE CHANGE (v2.0.0)**
+>
+> This project has been redesigned from an **LM Studio gateway** to a **llama-server gateway**. The new architecture uses **subprocess management** to control llama-server directly, rather than relying on LM Studio's Python SDK.
+>
+> **Key Changes:**
+> - ✅ **Process Management**: Gateway manages llama-server as a subprocess
+> - ✅ **Model Registry**: JSON-based model configuration instead of LM Studio SDK
+> - ✅ **Command Builder**: Generates llama-server CLI commands from configs
+> - ✅ **Direct Control**: Start/stop/restart llama-server processes
+> - ✅ **Full llama.cpp Support**: Native llama-server features (metrics, slots, props)
+>
+> **Module Names:**
+> - Package: `llama_gateway` (was `lmstudio_gateway`)
+> - Binary: `llama-server` from llama.cpp (not LM Studio)
+> - Host: Runs on same machine as llama-server (e.g., 10.0.0.181)
 
 ## Project Overview
 
-**lmstudio-lan-api** (also known as **LM Studio LAN Gateway**) is a production-ready LAN-based API gateway for LM Studio, enabling secure local network access to LM Studio's language model capabilities.
+**llama-server LAN Gateway** is a production-ready LAN-based API gateway for llama-server (llama.cpp), enabling secure local network access with full process lifecycle management.
 
 ### Project Purpose
-- Provide a secure gateway between LAN clients and LM Studio's OpenAI-compatible API
-- Enable remote model management via admin endpoints (load, unload, activate models)
-- Support load-time parameters (context length, GPU offload, TTL)
+- Provide a secure gateway between LAN clients and llama-server's OpenAI-compatible API
+- Enable remote model management via admin endpoints (load, unload, reload models)
+- Support full llama-server configuration (context length, GPU layers, flash attention, etc.)
 - Add security features: API key authentication, IP allow-listing
-- Transparently proxy all `/v1/...` requests to LM Studio's local API
+- Transparently proxy all `/v1/*` requests to llama-server
+- Manage llama-server as a subprocess with full lifecycle control
 - Provide structured logging and clean resource management
 
 ### Key Features
-- **Admin API**: Load models with custom configurations, unload models, activate defaults
-- **Transparent Proxy**: Forward all `/v1/*` endpoints (chat, completions, etc.) to LM Studio
+- **Process Management**: Full control of llama-server subprocess (start/stop/restart)
+- **Model Registry**: JSON-based configuration for multiple models
+- **Admin API**: Load, unload, reload models; manage registry
+- **Transparent Proxy**: Forward all `/v1/*` endpoints (chat, completions, etc.) to llama-server
 - **Security**: API key authentication and IP/CIDR-based access control
-- **Model Management**: Use LM Studio Python SDK for advanced model control
-- **Real-time Debugging**: SSE endpoints for live model loading progress and inference monitoring
-- **Production-Ready**: Proper error handling, logging, startup/shutdown lifecycle
+- **Real-time Debugging**: SSE endpoints for live monitoring, metrics, and slots
+- **Production-Ready**: Proper error handling, logging, graceful shutdown
 
 ## Repository Structure
 
 ```
-lmstudio-lan-api/
+llama-gateway/
 ├── src/
-│   └── lmstudio_gateway/
+│   └── llama_gateway/
 │       ├── __init__.py
 │       ├── settings.py           # Pydantic-based configuration
 │       ├── logging_config.py     # Structured logging setup
 │       ├── middleware.py         # API key & IP allowlist middleware
-│       ├── dependencies.py       # Shared httpx client & LM Studio SDK
+│       ├── model_registry.py     # Model configuration management
+│       ├── command_builder.py    # llama-server CLI command generation
+│       ├── process_manager.py    # llama-server subprocess control
 │       ├── admin_models.py       # /admin router for model management
-│       ├── debug.py              # /debug router for real-time debugging
+│       ├── debug.py              # /debug router for monitoring
 │       ├── proxy.py              # /v1 proxy router
 │       └── main.py               # FastAPI app assembly
+├── models/
+│   └── registry.json             # Model configurations
+├── logs/                         # llama-server logs
 ├── tests/
 │   ├── unit/                     # Unit tests
-│   ├── integration/              # Integration tests
-│   └── fixtures/                 # Test fixtures and mocks
-├── docs/                         # Additional documentation
-├── scripts/                      # Deployment and utility scripts
+│   └── integration/              # Integration tests
 ├── requirements.txt              # Python dependencies
 ├── .env.example                  # Environment variables template
 ├── .gitignore
-├── Dockerfile                    # Docker container definition
-├── docker-compose.yml            # Docker Compose setup
-├── pyproject.toml                # Optional: Python packaging config
 └── README.md                     # Project documentation
 ```
 
@@ -57,7 +74,8 @@ lmstudio-lan-api/
 - **Framework**: FastAPI
 - **Server**: Uvicorn (ASGI server)
 - **HTTP Client**: httpx (async)
-- **LM Studio Integration**: lmstudio-python SDK
+- **llama-server**: llama.cpp binary (subprocess)
+- **Process Management**: asyncio subprocess control
 - **Configuration**: Pydantic Settings with python-dotenv
 - **Validation**: Pydantic models
 

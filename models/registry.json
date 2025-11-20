@@ -1,0 +1,29 @@
+{
+  "models": [
+    {
+      "model_id": "apertus-70b-q8",
+      "name": "Apertus 70B Instruct Q8",
+      "description": "Swiss AI Apertus 70B Q8 quantization - Full precision for best quality",
+      "path": "models/bartowski/swiss-ai_Apertus-70B-Instruct-2509-GGUF/swiss-ai_Apertus-70B-Instruct-2509-Q8_0-00001-of-00002.gguf",
+      "config": {
+        "context_length": 8192,
+        "n_gpu_layers": 999,
+        "batch_size": 2048,
+        "host": "10.0.0.181",
+        "port": 8080,
+        "flash_attention": true,
+        "no_mmap": true,
+        "parallel": 1,
+        "timeout": 600,
+        "additional_args": []
+      },
+      "default_inference": {
+        "temperature": 0.7,
+        "max_tokens": 2048,
+        "top_p": 0.95,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0
+      }
+    }
+  ]
+}
