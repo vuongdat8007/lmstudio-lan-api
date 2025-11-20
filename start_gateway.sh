@@ -52,5 +52,5 @@ echo ""
 # Start the server
 uvicorn llama_gateway.main:app \
     --host 10.0.0.181 \
-    --port 8002ß \
+    --port 8001 \
     --log-level info
