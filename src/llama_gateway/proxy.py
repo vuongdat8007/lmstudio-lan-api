@@ -134,6 +134,40 @@ async def proxy_request(
         )
 
 
+@router.get("/v1/models")
+async def list_models_endpoint(request: Request) -> dict:
+    """
+    List loaded models in LM Studio-compatible format.
+
+    Returns:
+        Model list response compatible with collector-copilot
+    """
+    manager: LlamaServerManager = request.app.state.process_manager
+
+    loaded_model = None
+    loaded_models = []
+
+    # Check if a model is currently loaded
+    if manager.current_model and manager.status == ProcessStatus.RUNNING:
+        model_info = {
+            "id": manager.current_model.model_id,
+            "name": manager.current_model.name,
+            "description": manager.current_model.description or "",
+            "path": manager.current_model.path,
+            "loaded": True
+        }
+        loaded_model = manager.current_model.model_id
+        loaded_models.append(model_info)
+
+    return {
+        "loaded_model": loaded_model,
+        "loaded_models": loaded_models,
+        "downloaded_models": loaded_models,  # Same as loaded for now
+        "success": True,
+        "error": None
+    }
+
+
 @router.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def proxy_v1_endpoint(path: str, request: Request) -> Response:
     """
