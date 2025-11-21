@@ -160,12 +160,12 @@ async def load_model(
         registry: ModelRegistry = request.app.state.model_registry
         manager: LlamaServerManager = request.app.state.process_manager
 
-        # Get model from registry - try by ID first, then by path
+        # Get model from registry - try by ID first, then by path/filename
         model = registry.get_model(payload.model_key)
         if model is None:
-            # Try to find by path
+            # Try to find by path or filename
             for m in registry.list_models():
-                if m.path == payload.model_key:
+                if m.path == payload.model_key or m.path.endswith(payload.model_key):
                     model = m
                     break
         if model is None:
