@@ -19,7 +19,8 @@
       "Bash(python3:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(./create_ollama_models_from_merged_models.sh:*)"
     ],
     "deny": [],
     "ask": []

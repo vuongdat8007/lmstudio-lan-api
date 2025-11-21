@@ -5,7 +5,9 @@
 # These models were created after merging split GGUF files using merge_split_models.sh
 #
 # Usage:
-#   ./create_ollama_models_from_merged_models.sh                    # Create all models
+#   ./create_ollama_models_from_merged_models.sh                    # Create models only (keep source files)
+#   ./create_ollama_models_from_merged_models.sh --delete-sources   # Create models and delete source GGUF files
+#   ./create_ollama_models_from_merged_models.sh -d --dry-run       # Test what would be deleted
 #   ./create_ollama_models_from_merged_models.sh --verify-only      # Only verify files exist
 #   ./create_ollama_models_from_merged_models.sh --help             # Show help
 
@@ -13,6 +15,8 @@ set -e
 
 # Configuration
 VERIFY_ONLY=false
+DELETE_SOURCES=false
+DRY_RUN=false
 
 # Color codes
 GREEN='\033[0;32m'
@@ -24,6 +28,15 @@ NC='\033[0m' # No Color
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        -d|--delete-sources)
+            DELETE_SOURCES=true
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            DELETE_SOURCES=true  # Dry-run implies delete mode
+            shift
+            ;;
         --verify-only)
             VERIFY_ONLY=true
             shift
@@ -31,11 +44,13 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
-            echo "Create Ollama models from merged GGUF files."
+            echo "Create Ollama models from merged GGUF files and optionally delete source files."
             echo ""
             echo "Options:"
-            echo "  --verify-only    Only verify merged files exist, don't create models"
-            echo "  -h, --help       Show this help message"
+            echo "  -d, --delete-sources    Delete merged GGUF files after successful import"
+            echo "      --dry-run           Show what would be deleted without deleting"
+            echo "      --verify-only       Only verify merged files exist, don't create models"
+            echo "  -h, --help              Show this help message"
             echo ""
             echo "Prerequisites:"
             echo "  - Run merge_split_models.sh first to create merged GGUF files"
@@ -43,12 +58,23 @@ while [[ $# -gt 0 ]]; do
             echo "  - Run from the modelfiles directory"
             echo ""
             echo "Models created:"
-            echo "  1. apertus-70b-q6k             (Apertus 70B Q6_K - bartowski)"
-            echo "  2. apertus-70b-q8              (Apertus 70B Q8_0 - bartowski)"
-            echo "  3. apertus-70b-q6kxl           (Apertus 70B Q6_K_XL - unsloth)"
-            echo "  4. kimi-dev-72b-q6kxl          (Kimi-Dev 72B Q6_K_XL)"
-            echo "  5. qwen3-30b-bf16              (Qwen3 30B BF16)"
-            echo "  6. qwen3-coder-30b-1m-bf16     (Qwen3 Coder 30B 1M BF16)"
+            echo "  1. apertus-70b-q6k             (Apertus 70B Q6_K - bartowski) - 54 GB"
+            echo "  2. apertus-70b-q8              (Apertus 70B Q8_0 - bartowski) - 70 GB"
+            echo "  3. apertus-70b-q6kxl           (Apertus 70B Q6_K_XL - unsloth) - 58 GB"
+            echo "  4. kimi-dev-72b-q6kxl          (Kimi-Dev 72B Q6_K_XL) - 63 GB"
+            echo "  5. qwen3-30b-bf16              (Qwen3 30B BF16) - 57 GB"
+            echo "  6. qwen3-coder-30b-1m-bf16     (Qwen3 Coder 30B 1M BF16) - 57 GB"
+            echo ""
+            echo "Examples:"
+            echo "  $0                      # Safe mode: create models, keep GGUF files"
+            echo "  $0 --delete-sources     # Create models and auto-delete GGUF files"
+            echo "  $0 -d --dry-run         # Test mode: show what would be deleted"
+            echo ""
+            echo "Safety features:"
+            echo "  - Only deletes GGUF file if Ollama model creation succeeds"
+            echo "  - Verifies Ollama model exists before deletion"
+            echo "  - Stops immediately on any error"
+            echo "  - Total space savings: ~360 GB (all 6 models)"
             exit 0
             ;;
         *)
@@ -70,13 +96,66 @@ echo ""
 
 if [ "$VERIFY_ONLY" = true ]; then
     echo -e "${CYAN}Mode: VERIFICATION ONLY (no models will be created)${NC}"
+elif [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}Mode: DRY RUN (simulation only - no files deleted)${NC}"
+elif [ "$DELETE_SOURCES" = true ]; then
+    echo -e "${YELLOW}Mode: Creating models and DELETING source GGUF files${NC}"
+    echo -e "${YELLOW}⚠️  This will free up ~360 GB of disk space${NC}"
 else
-    echo -e "${GREEN}Mode: Creating Ollama models${NC}"
+    echo -e "${GREEN}Mode: Creating models (keep source GGUF files)${NC}"
 fi
 echo ""
 
 # Base path for models (adjust if needed)
 MODELS_BASE_PATH="/home/boxwoodtech/models"
+
+# Helper function to get file size (cross-platform: macOS and Linux)
+get_file_size() {
+    local file="$1"
+    # Try macOS stat first, fall back to Linux stat
+    stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null
+}
+
+# Helper function to delete source file after successful import
+# Returns the file size in bytes (via global variable) for tracking total space freed
+delete_source_file() {
+    local gguf_path="$1"
+    local model_name="$2"
+
+    # Initialize return value
+    DELETED_FILE_SIZE=0
+
+    if [ "$DELETE_SOURCES" != true ]; then
+        return 0
+    fi
+
+    echo -e "  ${CYAN}Verifying Ollama model before deletion...${NC}"
+
+    # Verify the Ollama model exists
+    if ! ollama list | grep -q "^${model_name} "; then
+        echo -e "  ${RED}ERROR: Ollama model not found in 'ollama list'${NC}"
+        echo -e "  ${RED}Skipping deletion for safety.${NC}"
+        return 1
+    fi
+
+    echo -e "  ${GREEN}✓ Ollama model verified${NC}"
+
+    # Get file size before deletion
+    file_size=$(get_file_size "$gguf_path")
+    file_size_gb=$(echo "scale=2; $file_size / 1024 / 1024 / 1024" | bc)
+
+    if [ "$DRY_RUN" = true ]; then
+        echo -e "  ${YELLOW}[DRY RUN] Would delete:${NC}"
+        echo -e "    ${YELLOW}- $(basename "$gguf_path") (${file_size_gb} GB)${NC}"
+    else
+        echo -e "  ${CYAN}Deleting source GGUF file...${NC}"
+        rm -f "$gguf_path"
+        echo -e "  ${GREEN}✓ Deleted: $(basename "$gguf_path") (freed ${file_size_gb} GB)${NC}"
+        DELETED_FILE_SIZE=$file_size
+    fi
+
+    return 0
+}
 
 # Define model configurations
 # Format: "modelfile_name:gguf_relative_path:ollama_model_name:description"
@@ -160,10 +239,13 @@ COUNT=0
 TOTAL=${#MODELS[@]}
 SUCCESS_COUNT=0
 FAILED_COUNT=0
+DELETED_COUNT=0
+TOTAL_SPACE_FREED=0
 
 for model_config in "${MODELS[@]}"; do
     COUNT=$((COUNT + 1))
     IFS=':' read -r modelfile gguf_path model_name description <<< "$model_config"
+    full_gguf_path="${MODELS_BASE_PATH}/${gguf_path}"
 
     echo -e "${CYAN}[$COUNT/$TOTAL] Creating: $model_name${NC}"
     echo -e "  Description: $description"
@@ -174,8 +256,19 @@ for model_config in "${MODELS[@]}"; do
     if ollama create "$model_name" -f "$modelfile"; then
         echo -e "${GREEN}✓ Successfully created: $model_name${NC}"
         SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+
+        # Delete source file if requested
+        if delete_source_file "$full_gguf_path" "$model_name"; then
+            if [ "$DELETE_SOURCES" = true ] && [ "$DRY_RUN" != true ]; then
+                DELETED_COUNT=$((DELETED_COUNT + 1))
+                TOTAL_SPACE_FREED=$((TOTAL_SPACE_FREED + DELETED_FILE_SIZE))
+            elif [ "$DRY_RUN" = true ]; then
+                DELETED_COUNT=$((DELETED_COUNT + 1))
+            fi
+        fi
     else
         echo -e "${RED}✗ Failed to create: $model_name${NC}"
+        echo -e "${RED}  Skipping deletion for safety.${NC}"
         FAILED_COUNT=$((FAILED_COUNT + 1))
     fi
     echo ""
@@ -190,6 +283,20 @@ echo -e "${GREEN}Successfully created: $SUCCESS_COUNT models${NC}"
 if [ $FAILED_COUNT -gt 0 ]; then
     echo -e "${RED}Failed: $FAILED_COUNT models${NC}"
 fi
+
+# Space savings summary
+if [ "$DELETE_SOURCES" = true ]; then
+    if [ "$DRY_RUN" = true ]; then
+        echo -e "${YELLOW}[DRY RUN] Would have deleted: $DELETED_COUNT source GGUF files${NC}"
+        echo -e "${YELLOW}Estimated space savings: ~360 GB${NC}"
+    else
+        echo -e "${GREEN}Deleted: $DELETED_COUNT source GGUF files${NC}"
+        if [ $TOTAL_SPACE_FREED -gt 0 ]; then
+            space_freed_gb=$(echo "scale=2; $TOTAL_SPACE_FREED / 1024 / 1024 / 1024" | bc)
+            echo -e "${GREEN}Total space freed: ${space_freed_gb} GB${NC}"
+        fi
+    fi
+fi
 echo ""
 
 # List all Ollama models
@@ -197,14 +304,27 @@ echo "All Ollama models:"
 ollama list
 echo ""
 
-echo -e "${CYAN}Models created from merged files:${NC}"
-echo "  • apertus-70b-q6k          (54 GB)"
-echo "  • apertus-70b-q8           (70 GB)"
-echo "  • apertus-70b-q6kxl        (58 GB)"
-echo "  • kimi-dev-72b-q6kxl       (63 GB)"
-echo "  • qwen3-30b-bf16           (57 GB)"
-echo "  • qwen3-coder-30b-1m-bf16  (57 GB)"
-echo ""
+if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}This was a DRY RUN - no files were deleted${NC}"
+    echo -e "${YELLOW}To actually delete files, run with: $0 --delete-sources${NC}"
+    echo ""
+elif [ "$DELETE_SOURCES" = true ]; then
+    echo -e "${GREEN}✓ All models created and source GGUF files deleted${NC}"
+    echo ""
+else
+    echo -e "${CYAN}Models created from merged files:${NC}"
+    echo "  • apertus-70b-q6k          (54 GB)"
+    echo "  • apertus-70b-q8           (70 GB)"
+    echo "  • apertus-70b-q6kxl        (58 GB)"
+    echo "  • kimi-dev-72b-q6kxl       (63 GB)"
+    echo "  • qwen3-30b-bf16           (57 GB)"
+    echo "  • qwen3-coder-30b-1m-bf16  (57 GB)"
+    echo ""
+    echo -e "${CYAN}Source GGUF files have been kept (safe mode)${NC}"
+    echo "To delete GGUF files and save ~360 GB, run:"
+    echo "  $0 --delete-sources"
+    echo ""
+fi
 
 if [ $FAILED_COUNT -gt 0 ]; then
     exit 1
