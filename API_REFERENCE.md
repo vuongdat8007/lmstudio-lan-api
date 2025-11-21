@@ -1,7 +1,7 @@
 # API Quick Reference
 
 API Key: `change-me-please`
-Gateway: `http://10.0.0.181:8001`
+Gateway: `http://10.0.0.181:8002`
 
 ---
 
@@ -14,7 +14,7 @@ Gateway: `http://10.0.0.181:8001`
 
 ### 2. Test Connection
 ```bash
-curl -H "X-API-Key: change-me-please" http://10.0.0.181:8001/health
+curl -H "X-API-Key: change-me-please" http://10.0.0.181:8002/health
 ```
 
 ---
@@ -24,18 +24,18 @@ curl -H "X-API-Key: change-me-please" http://10.0.0.181:8001/health
 ### List All Models
 ```bash
 curl -H "X-API-Key: change-me-please" \
-  http://10.0.0.181:8001/admin/models | jq
+  http://10.0.0.181:8002/admin/models | jq
 ```
 
 ### Get Active Model
 ```bash
 curl -H "X-API-Key: change-me-please" \
-  http://10.0.0.181:8001/admin/models/active | jq
+  http://10.0.0.181:8002/admin/models/active | jq
 ```
 
 ### Load Model (Apertus-70B)
 ```bash
-curl -X POST http://10.0.0.181:8001/admin/models/load \
+curl -X POST http://10.0.0.181:8002/admin/models/load \
   -H "X-API-Key: change-me-please" \
   -H "Content-Type: application/json" \
   -d '{"model_id": "apertus-70b-q8"}'
@@ -43,13 +43,13 @@ curl -X POST http://10.0.0.181:8001/admin/models/load \
 
 ### Unload Model
 ```bash
-curl -X POST http://10.0.0.181:8001/admin/models/unload \
+curl -X POST http://10.0.0.181:8002/admin/models/unload \
   -H "X-API-Key: change-me-please"
 ```
 
 ### Reload Model
 ```bash
-curl -X POST http://10.0.0.181:8001/admin/models/reload \
+curl -X POST http://10.0.0.181:8002/admin/models/reload \
   -H "X-API-Key: change-me-please"
 ```
 
@@ -60,37 +60,37 @@ curl -X POST http://10.0.0.181:8001/admin/models/reload \
 ### Check Status
 ```bash
 curl -H "X-API-Key: change-me-please" \
-  http://10.0.0.181:8001/debug/status | jq
+  http://10.0.0.181:8002/debug/status | jq
 ```
 
 ### View Logs (Last 50 Lines)
 ```bash
 curl -H "X-API-Key: change-me-please" \
-  "http://10.0.0.181:8001/debug/logs?lines=50" | jq
+  "http://10.0.0.181:8002/debug/logs?lines=50" | jq
 ```
 
 ### Get Metrics (Prometheus)
 ```bash
 curl -H "X-API-Key: change-me-please" \
-  http://10.0.0.181:8001/debug/metrics
+  http://10.0.0.181:8002/debug/metrics
 ```
 
 ### Get Slots Info
 ```bash
 curl -H "X-API-Key: change-me-please" \
-  http://10.0.0.181:8001/debug/slots | jq
+  http://10.0.0.181:8002/debug/slots | jq
 ```
 
 ### Get Server Properties
 ```bash
 curl -H "X-API-Key: change-me-please" \
-  http://10.0.0.181:8001/debug/props | jq
+  http://10.0.0.181:8002/debug/props | jq
 ```
 
 ### Stream Debug Events (SSE)
 ```bash
 curl -N -H "X-API-Key: change-me-please" \
-  http://10.0.0.181:8001/debug/stream
+  http://10.0.0.181:8002/debug/stream
 ```
 
 ---
@@ -99,7 +99,7 @@ curl -N -H "X-API-Key: change-me-please" \
 
 ### Chat Completion
 ```bash
-curl -X POST http://10.0.0.181:8001/v1/chat/completions \
+curl -X POST http://10.0.0.181:8002/v1/chat/completions \
   -H "X-API-Key: change-me-please" \
   -H "Content-Type: application/json" \
   -d '{
@@ -113,7 +113,7 @@ curl -X POST http://10.0.0.181:8001/v1/chat/completions \
 
 ### Chat Completion (Streaming)
 ```bash
-curl -N -X POST http://10.0.0.181:8001/v1/chat/completions \
+curl -N -X POST http://10.0.0.181:8002/v1/chat/completions \
   -H "X-API-Key: change-me-please" \
   -H "Content-Type: application/json" \
   -d '{
@@ -127,7 +127,7 @@ curl -N -X POST http://10.0.0.181:8001/v1/chat/completions \
 ### List Models (OpenAI Format)
 ```bash
 curl -H "X-API-Key: change-me-please" \
-  http://10.0.0.181:8001/v1/models | jq
+  http://10.0.0.181:8002/v1/models | jq
 ```
 
 ---
@@ -139,7 +139,7 @@ curl -H "X-API-Key: change-me-please" \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://10.0.0.181:8001/v1",
+    base_url="http://10.0.0.181:8002/v1",
     api_key="change-me-please"
 )
 
@@ -165,7 +165,7 @@ headers = {
 
 # Load model
 response = requests.post(
-    "http://10.0.0.181:8001/admin/models/load",
+    "http://10.0.0.181:8002/admin/models/load",
     headers=headers,
     json={"model_id": "apertus-70b-q8"}
 )
@@ -174,7 +174,7 @@ print(response.json())
 
 # Chat
 response = requests.post(
-    "http://10.0.0.181:8001/v1/chat/completions",
+    "http://10.0.0.181:8002/v1/chat/completions",
     headers=headers,
     json={
         "messages": [{"role": "user", "content": "Hello!"}],
@@ -192,7 +192,7 @@ print(response.json()["choices"][0]["message"]["content"])
 ### Using Fetch API
 ```javascript
 const API_KEY = "change-me-please";
-const BASE_URL = "http://10.0.0.181:8001";
+const BASE_URL = "http://10.0.0.181:8002";
 
 // Load model
 async function loadModel() {
@@ -235,7 +235,7 @@ loadModel().then(() => {
 ### Using EventSource (SSE Streaming)
 ```javascript
 const eventSource = new EventSource(
-  'http://10.0.0.181:8001/debug/stream',
+  'http://10.0.0.181:8002/debug/stream',
   { headers: { 'X-API-Key': 'change-me-please' } }
 );
 
@@ -262,17 +262,17 @@ eventSource.onerror = (error) => {
 ./start_gateway.sh
 
 # 2. In another terminal, load model
-curl -X POST http://10.0.0.181:8001/admin/models/load \
+curl -X POST http://10.0.0.181:8002/admin/models/load \
   -H "X-API-Key: change-me-please" \
   -H "Content-Type: application/json" \
   -d '{"model_id": "apertus-70b-q8"}'
 
 # 3. Wait for model to load (check status)
 curl -H "X-API-Key: change-me-please" \
-  http://10.0.0.181:8001/debug/status | jq .llama_server.status
+  http://10.0.0.181:8002/debug/status | jq .llama_server.status
 
 # 4. Make a request
-curl -X POST http://10.0.0.181:8001/v1/chat/completions \
+curl -X POST http://10.0.0.181:8002/v1/chat/completions \
   -H "X-API-Key: change-me-please" \
   -H "Content-Type: application/json" \
   -d '{"messages": [{"role": "user", "content": "Hi!"}]}' | jq
@@ -282,10 +282,10 @@ curl -X POST http://10.0.0.181:8001/v1/chat/completions \
 ```bash
 # Terminal 1: Stream debug events
 curl -N -H "X-API-Key: change-me-please" \
-  http://10.0.0.181:8001/debug/stream
+  http://10.0.0.181:8002/debug/stream
 
 # Terminal 2: Load model
-curl -X POST http://10.0.0.181:8001/admin/models/load \
+curl -X POST http://10.0.0.181:8002/admin/models/load \
   -H "X-API-Key: change-me-please" \
   -H "Content-Type: application/json" \
   -d '{"model_id": "apertus-70b-q8"}'
@@ -297,7 +297,7 @@ curl -X POST http://10.0.0.181:8001/admin/models/load \
 ```bash
 # View recent logs
 curl -H "X-API-Key: change-me-please" \
-  "http://10.0.0.181:8001/debug/logs?lines=100" | jq
+  "http://10.0.0.181:8002/debug/logs?lines=100" | jq
 
 # Or check log files directly
 tail -f logs/llama-server-stdout.log
@@ -309,8 +309,8 @@ tail -f logs/llama-server-stderr.log
 ## 📚 Interactive Documentation
 
 Open in browser:
-- **Swagger UI**: http://10.0.0.181:8001/docs
-- **ReDoc**: http://10.0.0.181:8001/redoc
+- **Swagger UI**: http://10.0.0.181:8002/docs
+- **ReDoc**: http://10.0.0.181:8002/redoc
 
 ---
 
@@ -356,7 +356,7 @@ ls -lh models/bartowski/swiss-ai_Apertus-70B-Instruct-2509-GGUF/
 
 # Check logs
 curl -H "X-API-Key: change-me-please" \
-  "http://10.0.0.181:8001/debug/logs?lines=50" | jq .stderr
+  "http://10.0.0.181:8002/debug/logs?lines=50" | jq .stderr
 ```
 
 ### Can't connect from another machine
