@@ -1,4 +1,4 @@
-"""Transparent proxy for /v1/* endpoints to llama-server."""
+"""Transparent proxy for /v1/* endpoints to Ollama."""
 
 from typing import Optional
 
@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request, Response, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from .logging_config import get_logger
-from .process_manager import LlamaServerManager, ProcessStatus
+from .ollama_client import OllamaClient
 from .settings import settings
 
 logger = get_logger("proxy")
@@ -15,26 +15,20 @@ logger = get_logger("proxy")
 router = APIRouter(tags=["proxy"])
 
 
-async def check_llama_server_running(manager: LlamaServerManager) -> None:
+async def check_ollama_running(ollama_client: OllamaClient) -> None:
     """
-    Check if llama-server is running.
+    Check if Ollama service is running.
 
     Args:
-        manager: Process manager instance
+        ollama_client: Ollama client instance
 
     Raises:
-        HTTPException: If llama-server is not running
+        HTTPException: If Ollama is not accessible
     """
-    if manager.status != ProcessStatus.RUNNING:
+    if not await ollama_client.is_healthy():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"llama-server is not running (status: {manager.status.value})"
-        )
-
-    if not await manager.is_healthy():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="llama-server is not healthy"
+            detail="Ollama service is not running or not accessible"
         )
 
 
@@ -42,25 +36,25 @@ async def proxy_request(
     request: Request,
     path: str,
     http_client: httpx.AsyncClient,
-    manager: LlamaServerManager
+    ollama_client: OllamaClient
 ) -> Response:
     """
-    Proxy a request to llama-server.
+    Proxy a request to Ollama.
 
     Args:
         request: FastAPI request
         path: Request path
         http_client: httpx client
-        manager: Process manager
+        ollama_client: Ollama client
 
     Returns:
         Proxied response
     """
-    # Check if llama-server is running
-    await check_llama_server_running(manager)
+    # Check if Ollama is running
+    await check_ollama_running(ollama_client)
 
     # Build target URL
-    target_url = f"{settings.llama_server_base_url}{path}"
+    target_url = f"{settings.OLLAMA_BASE_URL}{path}"
 
     # Get request body if present
     body = await request.body()
@@ -82,7 +76,7 @@ async def proxy_request(
             content=body,
             headers=headers,
             params=request.query_params,
-            timeout=300.0,  # 5 minutes for long-running requests
+            timeout=settings.OLLAMA_TIMEOUT,
         )
 
         # Check if response is streaming (SSE or streaming JSON)
@@ -118,13 +112,13 @@ async def proxy_request(
         logger.exception(f"Timeout proxying request: {e}")
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Request to llama-server timed out"
+            detail="Request to Ollama timed out"
         )
     except httpx.RequestError as e:
         logger.exception(f"Error proxying request: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to connect to llama-server: {str(e)}"
+            detail=f"Failed to connect to Ollama: {str(e)}"
         )
     except Exception as e:
         logger.exception(f"Unexpected error proxying request: {e}")
@@ -137,69 +131,63 @@ async def proxy_request(
 @router.get("/v1/models")
 async def list_models_endpoint(request: Request) -> dict:
     """
-    List loaded models in LM Studio-compatible format.
+    List models in OpenAI-compatible format.
 
     Returns:
-        Model list response compatible with collector-copilot
+        Model list response compatible with OpenAI API format
     """
-    from .model_registry import ModelRegistry
+    ollama_client: OllamaClient = request.app.state.ollama_client
 
-    manager: LlamaServerManager = request.app.state.process_manager
-    registry: ModelRegistry = request.app.state.model_registry
+    try:
+        # Get models from Ollama
+        ollama_models = await ollama_client.list_models()
 
-    loaded_model = None
-    loaded_models = []
+        # Convert to OpenAI format
+        openai_models = []
+        for model in ollama_models:
+            model_name = model.get("name", "")
+            openai_models.append({
+                "id": model_name,
+                "object": "model",
+                "created": int(model.get("modified_at", "0").timestamp()) if hasattr(model.get("modified_at", "0"), 'timestamp') else 0,
+                "owned_by": "ollama",
+                "permission": [],
+                "root": model_name,
+                "parent": None,
+            })
 
-    # Check if a model is currently loaded
-    if manager.current_model and manager.status == ProcessStatus.RUNNING:
-        model_info = {
-            "id": manager.current_model.model_id,
-            "name": manager.current_model.name,
-            "description": manager.current_model.description or "",
-            "path": manager.current_model.path,
-            "loaded": True
+        return {
+            "object": "list",
+            "data": openai_models
         }
-        loaded_model = manager.current_model.model_id
-        loaded_models.append(model_info)
 
-    # Get all available models from registry
-    downloaded_models = []
-    for model in registry.list_models():
-        is_loaded = manager.current_model and model.model_id == manager.current_model.model_id
-        downloaded_models.append({
-            "id": model.model_id,
-            "name": model.name,
-            "description": model.description or "",
-            "path": model.path,
-            "loaded": is_loaded
-        })
-
-    return {
-        "loaded_model": loaded_model,
-        "loaded": loaded_models,
-        "downloaded": downloaded_models,
-        "success": True,
-        "error": None
-    }
+    except Exception as e:
+        logger.exception(f"Error listing models: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list models: {str(e)}"
+        )
 
 
 @router.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def proxy_v1_endpoint(path: str, request: Request) -> Response:
     """
-    Proxy all /v1/* endpoints to llama-server.
+    Proxy all /v1/* endpoints to Ollama.
+
+    Ollama provides OpenAI-compatible endpoints at /v1/*.
 
     Args:
         path: Path after /v1/
         request: FastAPI request
 
     Returns:
-        Proxied response from llama-server
+        Proxied response from Ollama
     """
     http_client: httpx.AsyncClient = request.app.state.http_client
-    manager: LlamaServerManager = request.app.state.process_manager
+    ollama_client: OllamaClient = request.app.state.ollama_client
 
     full_path = f"/v1/{path}"
-    return await proxy_request(request, full_path, http_client, manager)
+    return await proxy_request(request, full_path, http_client, ollama_client)
 
 
 @router.get("/health")
@@ -208,20 +196,30 @@ async def health_check(request: Request) -> dict:
     Gateway health check endpoint.
 
     Returns:
-        Health status
+        Health status of gateway and Ollama
     """
-    manager: LlamaServerManager = request.app.state.process_manager
+    ollama_client: OllamaClient = request.app.state.ollama_client
 
-    is_running = await manager.is_running()
-    is_healthy = await manager.is_healthy() if is_running else False
+    # Check Ollama health
+    is_healthy = await ollama_client.is_healthy()
+
+    # Get running models
+    running_models = []
+    active_model_id = getattr(request.app.state, 'active_model_id', None)
+
+    if is_healthy:
+        try:
+            running = await ollama_client.list_running_models()
+            running_models = [m.get("name") for m in running]
+        except Exception as e:
+            logger.warning(f"Could not get running models: {e}")
 
     return {
-        "status": "ok",
+        "status": "ok" if is_healthy else "degraded",
         "gateway": "running",
-        "llama_server": {
-            "running": is_running,
+        "ollama": {
             "healthy": is_healthy,
-            "status": manager.status.value,
-            "model": manager.current_model.model_id if manager.current_model else None
+            "running_models": running_models,
+            "active_model": active_model_id
         }
     }

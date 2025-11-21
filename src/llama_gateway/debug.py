@@ -1,4 +1,4 @@
-"""Debug and monitoring endpoints."""
+"""Debug and monitoring endpoints for Ollama."""
 
 import asyncio
 import json
@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request, HTTPException, status
 from sse_starlette.sse import EventSourceResponse
 
 from .logging_config import get_logger
-from .process_manager import LlamaServerManager, ProcessStatus
+from .ollama_client import OllamaClient
 from .settings import settings
 
 logger = get_logger("debug")
@@ -51,27 +51,39 @@ async def get_debug_status(request: Request) -> Dict[str, Any]:
     Get current debug status snapshot.
 
     Returns:
-        Current status information
+        Current status information including running models
     """
     logger.debug("Getting debug status")
 
     try:
-        manager: LlamaServerManager = request.app.state.process_manager
-        process_status = manager.get_status()
+        ollama_client: OllamaClient = request.app.state.ollama_client
+
+        # Get Ollama health
+        is_healthy = await ollama_client.is_healthy()
+
+        # Get running models
+        running_models = []
+        if is_healthy:
+            try:
+                running_models = await ollama_client.list_running_models()
+            except Exception as e:
+                logger.warning(f"Could not get running models: {e}")
+
+        # Get active model
+        active_model_id = getattr(request.app.state, 'active_model_id', None)
 
         return {
             "gateway": {
                 "status": "running",
-                "version": "2.0.0",
-                "uptime_seconds": None,  # TODO: Track gateway uptime
+                "version": "3.0.0",  # Updated for Ollama migration
+                "backend": "ollama",
             },
-            "llama_server": {
-                "status": process_status["status"],
-                "model": process_status["model"],
-                "started_at": process_status["started_at"],
-                "uptime_seconds": process_status["uptime_seconds"],
-                "pid": process_status["pid"],
-                "error_message": process_status["error_message"],
+            "ollama": {
+                "healthy": is_healthy,
+                "base_url": settings.OLLAMA_BASE_URL,
+                "active_model": active_model_id,
+                "running_models": running_models,
+                "running_count": len(running_models),
             }
         }
 
@@ -100,7 +112,8 @@ async def stream_debug_events(request: Request) -> EventSourceResponse:
                 "event": "connected",
                 "data": json.dumps({
                     "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "message": "Debug stream connected"
+                    "message": "Debug stream connected",
+                    "backend": "ollama"
                 })
             }
 
@@ -124,191 +137,165 @@ async def stream_debug_events(request: Request) -> EventSourceResponse:
     return EventSourceResponse(event_stream())
 
 
-@router.get("/logs")
-async def get_logs(request: Request, lines: int = 50) -> Dict[str, Any]:
+@router.get("/models/running")
+async def get_running_models(request: Request) -> Dict[str, Any]:
     """
-    Get recent llama-server logs.
-
-    Args:
-        lines: Number of log lines to return (default: 50)
+    Get currently running models with details.
 
     Returns:
-        Recent stdout and stderr logs
+        List of running models with memory usage and timing info
     """
-    logger.debug(f"Getting logs (lines={lines})")
+    logger.debug("Getting running models")
 
     try:
-        manager: LlamaServerManager = request.app.state.process_manager
-        logs = manager.get_logs(lines=lines)
+        ollama_client: OllamaClient = request.app.state.ollama_client
+        running_models = await ollama_client.list_running_models()
 
         return {
-            "lines": lines,
-            "stdout": logs["stdout"],
-            "stderr": logs["stderr"]
+            "count": len(running_models),
+            "models": running_models
         }
 
     except Exception as e:
-        logger.exception(f"Error getting logs: {e}")
+        logger.exception(f"Error getting running models: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get logs: {str(e)}"
+            detail=f"Failed to get running models: {str(e)}"
         )
 
 
-@router.get("/metrics")
-async def get_metrics(request: Request) -> Dict[str, Any]:
+@router.get("/models/{model_name}/info")
+async def get_model_info(model_name: str, request: Request) -> Dict[str, Any]:
     """
-    Get metrics from llama-server or return empty metrics if not running.
+    Get detailed information about a specific model.
+
+    Args:
+        model_name: Ollama model name
 
     Returns:
-        Metrics data or empty metrics structure
+        Model details including modelfile, parameters, template
     """
-    logger.debug("Getting metrics")
+    logger.debug(f"Getting model info for: {model_name}")
 
     try:
-        manager: LlamaServerManager = request.app.state.process_manager
+        ollama_client: OllamaClient = request.app.state.ollama_client
 
-        # If llama-server is not running, return empty metrics
-        if manager.status != ProcessStatus.RUNNING:
-            return {
-                "llama_server_running": False,
-                "model": None,
-                "metrics": None,
-                "message": "llama-server is not running - load a model first"
-            }
+        # Resolve model name if it's a custom ID
+        if hasattr(request.app.state, 'model_adapter') and request.app.state.model_adapter:
+            from .model_adapter import ModelAdapter
+            adapter: ModelAdapter = request.app.state.model_adapter
+            model_name = adapter.resolve_model_name(model_name)
 
-        # Try to proxy to llama-server /metrics
-        try:
-            http_client: httpx.AsyncClient = request.app.state.http_client
-            response = await http_client.get(
-                f"{settings.llama_server_base_url}/metrics",
-                timeout=10.0
+        model_info = await ollama_client.show_model(model_name)
+
+        return {
+            "model_name": model_name,
+            "info": model_info
+        }
+
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Model not found: {model_name}"
             )
-
-            if response.status_code in (404, 501):
-                return {
-                    "llama_server_running": True,
-                    "model": manager.current_model.model_id if manager.current_model else None,
-                    "metrics": None,
-                    "message": "llama-server metrics endpoint not available"
-                }
-
-            response.raise_for_status()
-            return {
-                "llama_server_running": True,
-                "model": manager.current_model.model_id if manager.current_model else None,
-                "metrics": response.text,
-                "message": None
-            }
-
-        except httpx.RequestError as e:
-            logger.warning(f"Failed to fetch metrics from llama-server: {e}")
-            return {
-                "llama_server_running": True,
-                "model": manager.current_model.model_id if manager.current_model else None,
-                "metrics": None,
-                "message": f"Failed to fetch metrics: {str(e)}"
-            }
-
-    except Exception as e:
-        logger.exception(f"Error getting metrics: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get metrics: {str(e)}"
+            detail=f"Failed to get model info: {str(e)}"
+        )
+    except Exception as e:
+        logger.exception(f"Error getting model info: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get model info: {str(e)}"
         )
 
 
-@router.get("/slots")
-async def get_slots(request: Request) -> Dict[str, Any]:
+@router.get("/version")
+async def get_ollama_version(request: Request) -> Dict[str, Any]:
     """
-    Get llama-server slots information.
+    Get Ollama version information.
 
     Returns:
-        Slot information or empty response if not running
+        Ollama version details
     """
-    logger.debug("Getting slots")
+    logger.debug("Getting Ollama version")
 
     try:
-        manager: LlamaServerManager = request.app.state.process_manager
+        ollama_client: OllamaClient = request.app.state.ollama_client
+        version_info = await ollama_client.get_version()
 
-        if manager.status != ProcessStatus.RUNNING:
-            return {
-                "llama_server_running": False,
-                "slots": [],
-                "message": "llama-server is not running - load a model first"
+        return {
+            "ollama": version_info,
+            "gateway": {
+                "version": "3.0.0",
+                "backend": "ollama"
             }
-
-        try:
-            http_client: httpx.AsyncClient = request.app.state.http_client
-            response = await http_client.get(
-                f"{settings.llama_server_base_url}/slots",
-                timeout=10.0
-            )
-            response.raise_for_status()
-            return {
-                "llama_server_running": True,
-                "slots": response.json(),
-                "message": None
-            }
-        except httpx.RequestError as e:
-            logger.warning(f"Failed to fetch slots: {e}")
-            return {
-                "llama_server_running": True,
-                "slots": [],
-                "message": f"Failed to fetch slots: {str(e)}"
-            }
+        }
 
     except Exception as e:
-        logger.exception(f"Error getting slots: {e}")
+        logger.exception(f"Error getting version: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get slots: {str(e)}"
+            detail=f"Failed to get version: {str(e)}"
         )
 
 
-@router.get("/props")
-async def get_props(request: Request) -> Dict[str, Any]:
+@router.get("/health")
+async def debug_health_check(request: Request) -> Dict[str, Any]:
     """
-    Get llama-server properties.
+    Detailed health check with timing information.
 
     Returns:
-        Server properties or empty response if not running
+        Detailed health status
     """
-    logger.debug("Getting props")
+    logger.debug("Debug health check")
 
     try:
-        manager: LlamaServerManager = request.app.state.process_manager
+        ollama_client: OllamaClient = request.app.state.ollama_client
 
-        if manager.status != ProcessStatus.RUNNING:
-            return {
-                "llama_server_running": False,
-                "props": None,
-                "message": "llama-server is not running - load a model first"
-            }
+        start_time = datetime.utcnow()
+        is_healthy = await ollama_client.is_healthy()
+        response_time_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
 
-        try:
-            http_client: httpx.AsyncClient = request.app.state.http_client
-            response = await http_client.get(
-                f"{settings.llama_server_base_url}/props",
-                timeout=10.0
-            )
-            response.raise_for_status()
-            return {
-                "llama_server_running": True,
-                "props": response.json(),
-                "message": None
+        result = {
+            "gateway": {
+                "status": "running",
+                "version": "3.0.0"
+            },
+            "ollama": {
+                "healthy": is_healthy,
+                "base_url": settings.OLLAMA_BASE_URL,
+                "response_time_ms": round(response_time_ms, 2)
             }
-        except httpx.RequestError as e:
-            logger.warning(f"Failed to fetch props: {e}")
-            return {
-                "llama_server_running": True,
-                "props": None,
-                "message": f"Failed to fetch props: {str(e)}"
-            }
+        }
+
+        if is_healthy:
+            try:
+                running_models = await ollama_client.list_running_models()
+                result["ollama"]["running_models_count"] = len(running_models)
+            except Exception as e:
+                logger.warning(f"Could not get running models count: {e}")
+                result["ollama"]["running_models_count"] = None
+
+        return result
 
     except Exception as e:
-        logger.exception(f"Error getting props: {e}")
+        logger.exception(f"Error in debug health check: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get props: {str(e)}"
+            detail=f"Health check failed: {str(e)}"
         )
+
+
+# Note: Logs endpoint removed - Ollama logs are managed by system service
+# Users should use:
+# - Linux: journalctl -u ollama
+# - macOS: Check ~/Library/Logs/ollama.log
+# - Windows: Check Event Viewer or Ollama logs directory
+
+# Note: Slots endpoint removed - Ollama uses a different concurrency model
+# Use /debug/models/running to see active inference sessions
+
+# Note: Metrics endpoint - Ollama provides metrics via /api/ps
+# Use /debug/models/running for performance data

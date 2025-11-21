@@ -19,11 +19,11 @@ class Settings(BaseSettings):
     GATEWAY_HOST: str = Field(default="10.0.0.181", description="Gateway bind host")
     GATEWAY_PORT: int = Field(default=8001, ge=1, le=65535, description="Gateway bind port")
 
-    # llama-server settings
-    LLAMA_SERVER_HOST: str = Field(default="10.0.0.181", description="llama-server host")
-    LLAMA_SERVER_PORT: int = Field(default=8080, ge=1, le=65535, description="llama-server port")
-    LLAMA_SERVER_BINARY: str = Field(default="llama-server", description="Path to llama-server binary")
-    MODEL_REGISTRY_PATH: str = Field(default="models/registry.json", description="Path to model registry JSON")
+    # Ollama settings
+    OLLAMA_BASE_URL: str = Field(default="http://localhost:11434", description="Ollama API base URL")
+    OLLAMA_TIMEOUT: int = Field(default=300, ge=10, description="Ollama API request timeout in seconds")
+    MODEL_REGISTRY_PATH: Optional[str] = Field(default="models/registry.json", description="Path to model registry JSON (optional)")
+
 
     # Security settings
     GATEWAY_API_KEY: Optional[str] = Field(default=None, description="API key for authentication")
@@ -33,11 +33,6 @@ class Settings(BaseSettings):
     # Logging settings
     LOG_LEVEL: str = Field(default="INFO", description="Logging level")
     LOG_DIR: str = Field(default="logs", description="Directory for log files")
-
-    # Process management settings
-    STARTUP_TIMEOUT: int = Field(default=120, ge=10, description="Max seconds to wait for llama-server startup")
-    SHUTDOWN_TIMEOUT: int = Field(default=30, ge=5, description="Max seconds to wait for graceful shutdown")
-    HEALTH_CHECK_INTERVAL: int = Field(default=5, ge=1, description="Health check interval in seconds")
 
     @field_validator("LOG_LEVEL")
     @classmethod
@@ -50,14 +45,14 @@ class Settings(BaseSettings):
         return v_upper
 
     @property
-    def llama_server_base_url(self) -> str:
-        """Get the base URL for llama-server."""
-        return f"http://{self.LLAMA_SERVER_HOST}:{self.LLAMA_SERVER_PORT}"
-
-    @property
     def is_api_key_enabled(self) -> bool:
         """Check if API key authentication is enabled."""
         return self.GATEWAY_API_KEY is not None and len(self.GATEWAY_API_KEY.strip()) > 0
+
+    @property
+    def is_registry_enabled(self) -> bool:
+        """Check if model registry is enabled."""
+        return self.MODEL_REGISTRY_PATH is not None and len(self.MODEL_REGISTRY_PATH.strip()) > 0
 
 
 # Global settings instance
