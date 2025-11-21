@@ -18,7 +18,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 class LoadModelRequest(BaseModel):
     """Request to load a model."""
 
-    model_id: str = Field(..., description="Model ID from registry")
+    model_key: str = Field(..., description="Model path or model ID")
 
 
 class LoadModelResponse(BaseModel):
@@ -154,18 +154,24 @@ async def load_model(
     Returns:
         Load status and model information
     """
-    logger.info(f"Loading model: {payload.model_id}")
+    logger.info(f"Loading model: {payload.model_key}")
 
     try:
         registry: ModelRegistry = request.app.state.model_registry
         manager: LlamaServerManager = request.app.state.process_manager
 
-        # Get model from registry
-        model = registry.get_model(payload.model_id)
+        # Get model from registry - try by ID first, then by path
+        model = registry.get_model(payload.model_key)
+        if model is None:
+            # Try to find by path
+            for m in registry.list_models():
+                if m.path == payload.model_key:
+                    model = m
+                    break
         if model is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Model not found: {payload.model_id}"
+                detail=f"Model not found: {payload.model_key}"
             )
 
         # Stop current model if running
@@ -178,8 +184,8 @@ async def load_model(
 
         return LoadModelResponse(
             status="success",
-            model_id=payload.model_id,
-            message=f"Model {payload.model_id} loaded successfully",
+            model_id=model.model_id,
+            message=f"Model {model.model_id} loaded successfully",
             details=manager.get_status()
         )
 
