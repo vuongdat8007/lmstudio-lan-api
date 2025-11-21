@@ -177,6 +177,14 @@ for model_config in "${MODELS[@]}"; do
     IFS=':' read -r modelfile gguf_path model_name description <<< "$model_config"
     full_gguf_path="${MODELS_BASE_PATH}/${gguf_path}"
 
+    # Check if model is already in Ollama
+    if ollama list | grep -q "^${model_name}:"; then
+        echo -e "${GREEN}✓ Model already exists in Ollama: $model_name${NC}"
+        echo -e "${YELLOW}  Skipping (already imported)${NC}"
+        echo ""
+        continue
+    fi
+
     # Check if Modelfile exists
     if [ ! -f "$modelfile" ]; then
         echo -e "${RED}✗ Modelfile missing: $modelfile${NC}"
@@ -188,7 +196,7 @@ for model_config in "${MODELS[@]}"; do
     # Check if merged GGUF file exists
     if [ ! -f "$full_gguf_path" ]; then
         echo -e "${RED}✗ GGUF file missing: $gguf_path${NC}"
-        echo -e "${RED}  Run merge_split_models.sh first!${NC}"
+        echo -e "${RED}  Run merge_split_models.sh first or source file was already deleted!${NC}"
         VERIFICATION_FAILED=true
     else
         # Get file size
@@ -247,6 +255,15 @@ for model_config in "${MODELS[@]}"; do
     IFS=':' read -r modelfile gguf_path model_name description <<< "$model_config"
     full_gguf_path="${MODELS_BASE_PATH}/${gguf_path}"
 
+    # Skip if model already exists in Ollama
+    if ollama list | grep -q "^${model_name}:"; then
+        echo -e "${CYAN}[$COUNT/$TOTAL] Skipping: $model_name${NC}"
+        echo -e "${GREEN}  Model already exists in Ollama${NC}"
+        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        echo ""
+        continue
+    fi
+
     echo -e "${CYAN}[$COUNT/$TOTAL] Creating: $model_name${NC}"
     echo -e "  Description: $description"
     echo -e "  Modelfile: $modelfile"
@@ -279,10 +296,11 @@ echo "================================================"
 echo "Model Creation Complete!"
 echo "================================================"
 echo ""
-echo -e "${GREEN}Successfully created: $SUCCESS_COUNT models${NC}"
+echo -e "${GREEN}Total models ready: $SUCCESS_COUNT models${NC}"
 if [ $FAILED_COUNT -gt 0 ]; then
     echo -e "${RED}Failed: $FAILED_COUNT models${NC}"
 fi
+echo -e "${CYAN}(Note: Already-imported models were automatically skipped)${NC}"
 
 # Space savings summary
 if [ "$DELETE_SOURCES" = true ]; then
@@ -312,7 +330,7 @@ elif [ "$DELETE_SOURCES" = true ]; then
     echo -e "${GREEN}✓ All models created and source GGUF files deleted${NC}"
     echo ""
 else
-    echo -e "${CYAN}Models created from merged files:${NC}"
+    echo -e "${CYAN}All models available in Ollama:${NC}"
     echo "  • apertus-70b-q6k          (54 GB)"
     echo "  • apertus-70b-q8           (70 GB)"
     echo "  • apertus-70b-q6kxl        (58 GB)"
@@ -321,8 +339,8 @@ else
     echo "  • qwen3-coder-30b-1m-bf16  (57 GB)"
     echo ""
     echo -e "${CYAN}Source GGUF files have been kept (safe mode)${NC}"
-    echo "To delete GGUF files and save ~360 GB, run:"
-    echo "  $0 --delete-sources"
+    echo "To delete GGUF files for newly created models, run:"
+    echo "  ./cleanup_merged_sources.sh"
     echo ""
 fi
 
