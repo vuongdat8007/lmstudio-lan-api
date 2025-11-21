@@ -53,33 +53,53 @@ class ActiveModelResponse(BaseModel):
     uptime_seconds: Optional[int] = None
 
 
-@router.get("/models", response_model=ModelListResponse)
-async def list_models(request: Request) -> ModelListResponse:
+@router.get("/models")
+async def list_models(request: Request) -> dict:
     """
     List all models in the registry.
 
     Returns:
-        List of available models
+        LM Studio-compatible model list with loaded_model, loaded_models, downloaded_models
     """
     logger.info("Listing models from registry")
 
     try:
         registry: ModelRegistry = request.app.state.model_registry
+        manager: LlamaServerManager = request.app.state.process_manager
         models = registry.list_models()
 
-        models_data = [
-            {
-                "model_id": model.model_id,
-                "name": model.name,
-                "description": model.description,
-                "path": model.path,
-                "config": model.config.model_dump(),
-                "default_inference": model.default_inference.model_dump(),
-            }
-            for model in models
-        ]
+        # Build LM Studio-compatible response
+        loaded_model = None
+        loaded_models = []
 
-        return ModelListResponse(models=models_data, count=len(models_data))
+        if manager.current_model and manager.status == ProcessStatus.RUNNING:
+            loaded_model = manager.current_model.model_id
+            loaded_models.append({
+                "id": manager.current_model.model_id,
+                "name": manager.current_model.name,
+                "description": manager.current_model.description or "",
+                "path": manager.current_model.path,
+                "loaded": True
+            })
+
+        downloaded_models = []
+        for model in models:
+            is_loaded = manager.current_model and model.model_id == manager.current_model.model_id and manager.status == ProcessStatus.RUNNING
+            downloaded_models.append({
+                "id": model.model_id,
+                "name": model.name,
+                "description": model.description or "",
+                "path": model.path,
+                "loaded": is_loaded
+            })
+
+        return {
+            "loaded_model": loaded_model,
+            "loaded_models": loaded_models,
+            "downloaded_models": downloaded_models,
+            "success": True,
+            "error": None
+        }
 
     except Exception as e:
         logger.exception(f"Error listing models: {e}")
