@@ -17,6 +17,9 @@ from .settings import settings
 
 logger = get_logger("process_manager")
 
+# Project root directory (for subprocess working directory)
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+
 
 class ProcessStatus(str, Enum):
     """Process status enum."""
@@ -71,12 +74,14 @@ class LlamaServerManager:
             cmd = build_llama_server_command(model)
             cmd_str = command_to_string(cmd)
             logger.info(f"Command: {cmd_str}")
+            logger.debug(f"Working directory: {PROJECT_ROOT}")
 
-            # Start process
+            # Start process (with cwd set to project root so model paths work)
             self.process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=str(PROJECT_ROOT),
                 preexec_fn=None if not hasattr(signal, 'SIGTERM') else lambda: signal.signal(signal.SIGTERM, signal.SIG_DFL)
             )
 
