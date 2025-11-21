@@ -156,49 +156,60 @@ async def get_logs(request: Request, lines: int = 50) -> Dict[str, Any]:
 
 
 @router.get("/metrics")
-async def get_metrics(request: Request) -> Any:
+async def get_metrics(request: Request) -> Dict[str, Any]:
     """
-    Proxy llama-server Prometheus metrics.
+    Get metrics from llama-server or return empty metrics if not running.
 
     Returns:
-        Prometheus metrics from llama-server
+        Metrics data or empty metrics structure
     """
-    logger.debug("Proxying metrics endpoint")
+    logger.debug("Getting metrics")
 
     try:
         manager: LlamaServerManager = request.app.state.process_manager
 
-        # Check if llama-server is running
+        # If llama-server is not running, return empty metrics
         if manager.status != ProcessStatus.RUNNING:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="llama-server is not running"
+            return {
+                "llama_server_running": False,
+                "model": None,
+                "metrics": None,
+                "message": "llama-server is not running - load a model first"
+            }
+
+        # Try to proxy to llama-server /metrics
+        try:
+            http_client: httpx.AsyncClient = request.app.state.http_client
+            response = await http_client.get(
+                f"{settings.llama_server_base_url}/metrics",
+                timeout=10.0
             )
 
-        # Proxy to llama-server /metrics
-        http_client: httpx.AsyncClient = request.app.state.http_client
-        response = await http_client.get(
-            f"{settings.llama_server_base_url}/metrics",
-            timeout=10.0
-        )
+            if response.status_code == 404:
+                return {
+                    "llama_server_running": True,
+                    "model": manager.current_model.model_id if manager.current_model else None,
+                    "metrics": None,
+                    "message": "llama-server metrics endpoint not available"
+                }
 
-        if response.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="llama-server metrics not available (ensure --metrics flag is set)"
-            )
+            response.raise_for_status()
+            return {
+                "llama_server_running": True,
+                "model": manager.current_model.model_id if manager.current_model else None,
+                "metrics": response.text,
+                "message": None
+            }
 
-        response.raise_for_status()
-        return response.text
+        except httpx.RequestError as e:
+            logger.warning(f"Failed to fetch metrics from llama-server: {e}")
+            return {
+                "llama_server_running": True,
+                "model": manager.current_model.model_id if manager.current_model else None,
+                "metrics": None,
+                "message": f"Failed to fetch metrics: {str(e)}"
+            }
 
-    except HTTPException:
-        raise
-    except httpx.RequestError as e:
-        logger.exception(f"Error proxying metrics: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to get metrics from llama-server: {str(e)}"
-        )
     except Exception as e:
         logger.exception(f"Error getting metrics: {e}")
         raise HTTPException(
