@@ -3,8 +3,8 @@
     {
       "model_id": "apertus-70b-q4",
       "name": "Apertus 70B Instruct Q4",
-      "description": "Swiss AI Apertus 70B Q4_K_L quantization - Good balance of quality and speed",
-      "path": "models/bartowski/swiss-ai_Apertus-70B-Instruct-2509-GGUF/swiss-ai_Apertus-70B-Instruct-2509-Q4_K_L.gguf",
+      "description": "Swiss AI Apertus 70B Q4_K_L quantization - Excellent quality, 42GB",
+      "path": "../models/bartowski/swiss-ai_Apertus-70B-Instruct-2509-GGUF/swiss-ai_Apertus-70B-Instruct-2509-Q4_K_L.gguf",
       "config": {
         "context_length": 8192,
         "n_gpu_layers": 999,
@@ -26,10 +26,10 @@
       }
     },
     {
-      "model_id": "apertus-70b-q6",
-      "name": "Apertus 70B Instruct Q6",
-      "description": "Swiss AI Apertus 70B Q6_K quantization - Higher quality, balanced performance",
-      "path": "models/bartowski/swiss-ai_Apertus-70B-Instruct-2509-GGUF/swiss-ai_Apertus-70B-Instruct-2509-Q6_K.gguf",
+      "model_id": "apertus-8b-bf16",
+      "name": "Apertus 8B Instruct BF16",
+      "description": "Swiss AI Apertus 8B BF16 - Full precision, 16GB, very fast",
+      "path": "../models/bartowski/swiss-ai_Apertus-8B-Instruct-2509-GGUF/swiss-ai_Apertus-8B-Instruct-2509-bf16.gguf",
       "config": {
         "context_length": 8192,
         "n_gpu_layers": 999,
@@ -51,35 +51,10 @@
       }
     },
     {
-      "model_id": "apertus-8b-q8",
-      "name": "Apertus 8B Instruct Q8",
-      "description": "Swiss AI Apertus 8B Q8 quantization - Faster inference, smaller model",
-      "path": "models/bartowski/Apertus-8B-Instruct-GGUF/Apertus-8B-Instruct-Q8_0.gguf",
-      "config": {
-        "context_length": 8192,
-        "n_gpu_layers": 999,
-        "batch_size": 2048,
-        "host": "10.0.0.181",
-        "port": 8080,
-        "flash_attention": true,
-        "no_mmap": true,
-        "parallel": 1,
-        "timeout": 600,
-        "additional_args": []
-      },
-      "default_inference": {
-        "temperature": 0.7,
-        "max_tokens": 2048,
-        "top_p": 0.95,
-        "frequency_penalty": 0.0,
-        "presence_penalty": 0.0
-      }
-    },
-    {
-      "model_id": "qwen2.5-coder-32b-q4",
-      "name": "Qwen2.5 Coder 32B Q4",
-      "description": "Qwen 2.5 Coder 32B Q4_K_M - Code generation specialist",
-      "path": "models/bartowski/Qwen2.5-Coder-32B-Instruct-GGUF/Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
+      "model_id": "qwen3-coder-30b-q8",
+      "name": "Qwen3 Coder 30B Q8",
+      "description": "Qwen3 Coder 30B Q8_0 - Code generation specialist",
+      "path": "../models/lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-GGUF/Qwen3-Coder-30B-A3B-Instruct-Q8_0.gguf",
       "config": {
         "context_length": 32768,
         "n_gpu_layers": 999,
@@ -95,31 +70,6 @@
       "default_inference": {
         "temperature": 0.3,
         "max_tokens": 4096,
-        "top_p": 0.95,
-        "frequency_penalty": 0.0,
-        "presence_penalty": 0.0
-      }
-    },
-    {
-      "model_id": "deepseek-r1-distill-qwen-32b-q4",
-      "name": "DeepSeek R1 Distill Qwen 32B Q4",
-      "description": "DeepSeek R1 distilled to Qwen 32B Q4_K_M - Advanced reasoning",
-      "path": "models/bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
-      "config": {
-        "context_length": 8192,
-        "n_gpu_layers": 999,
-        "batch_size": 2048,
-        "host": "10.0.0.181",
-        "port": 8080,
-        "flash_attention": true,
-        "no_mmap": true,
-        "parallel": 1,
-        "timeout": 600,
-        "additional_args": []
-      },
-      "default_inference": {
-        "temperature": 0.7,
-        "max_tokens": 2048,
         "top_p": 0.95,
         "frequency_penalty": 0.0,
         "presence_penalty": 0.0
