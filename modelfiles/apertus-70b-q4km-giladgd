@@ -1,0 +1,4 @@
+FROM /home/boxwoodtech/models/giladgd/Apertus-70B-Instruct-2509-GGUF/Apertus-70B-Instruct-2509.Q4_K_M.gguf
+
+PARAMETER temperature 0.7
+PARAMETER num_ctx 8192

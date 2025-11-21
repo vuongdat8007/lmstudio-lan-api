@@ -1,0 +1,4 @@
+FROM /home/boxwoodtech/models/bartowski/swiss-ai_Apertus-70B-Instruct-2509-GGUF/swiss-ai_Apertus-70B-Instruct-2509-Q4_K_L.gguf
+
+PARAMETER temperature 0.7
+PARAMETER num_ctx 8192

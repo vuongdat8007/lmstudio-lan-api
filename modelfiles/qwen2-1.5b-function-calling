@@ -1,0 +1,4 @@
+FROM /home/boxwoodtech/models/alexwirrell/Qwen2-1.5B-Instruct-Function-Calling-v1-Q4_K_M-GGUF/qwen2-1.5b-instruct-function-calling-v1-q4_k_m.gguf
+
+PARAMETER temperature 0.7
+PARAMETER num_ctx 8192

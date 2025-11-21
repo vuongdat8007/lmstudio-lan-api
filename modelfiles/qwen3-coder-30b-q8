@@ -1,0 +1,4 @@
+FROM /home/boxwoodtech/models/lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-GGUF/Qwen3-Coder-30B-A3B-Instruct-Q8_0.gguf
+
+PARAMETER temperature 0.3
+PARAMETER num_ctx 32768
