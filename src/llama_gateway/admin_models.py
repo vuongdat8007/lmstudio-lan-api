@@ -95,8 +95,8 @@ async def list_models(request: Request) -> dict:
 
         return {
             "loaded_model": loaded_model,
-            "loaded_models": loaded_models,
-            "downloaded_models": downloaded_models,
+            "loaded": loaded_models,
+            "downloaded": downloaded_models,
             "success": True,
             "error": None
         }
