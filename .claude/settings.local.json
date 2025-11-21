@@ -15,7 +15,8 @@
       "Bash(find:*)",
       "Bash(echo:*)",
       "Bash(unset:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

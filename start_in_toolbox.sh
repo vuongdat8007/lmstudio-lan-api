@@ -125,21 +125,22 @@ toolbox run -c "$TOOLBOX" bash -c "
 
     # Check Python dependencies
     if ! python3 -c 'import fastapi' 2>/dev/null; then
-        echo '⚠️  Installing Python dependencies...'
-        if [ -f .venv/bin/activate ]; then
-            source .venv/bin/activate
+        echo '⚠️  Installing Python dependencies in toolbox...'
+        # Install in toolbox-specific venv
+        if [ -f .venv-toolbox/bin/activate ]; then
+            source .venv-toolbox/bin/activate
             pip install -r requirements.txt
         else
-            python3 -m venv .venv
-            source .venv/bin/activate
+            python3 -m venv .venv-toolbox
+            source .venv-toolbox/bin/activate
             pip install -r requirements.txt
         fi
         echo ''
     fi
 
-    # Activate venv if exists
-    if [ -f .venv/bin/activate ]; then
-        source .venv/bin/activate
+    # Activate toolbox venv if exists
+    if [ -f .venv-toolbox/bin/activate ]; then
+        source .venv-toolbox/bin/activate
     fi
 
     # Set PYTHONPATH
