@@ -119,36 +119,39 @@ for file_config in "${SOURCE_FILES[@]}"; do
     IFS=':' read -r gguf_path model_name description <<< "$file_config"
     full_gguf_path="${MODELS_BASE_PATH}/${gguf_path}"
 
-    # Check if Ollama model exists
-    if ! ollama list | grep -q "^${model_name} "; then
-        echo -e "${RED}✗ Ollama model NOT found: $model_name${NC}"
-        echo -e "${RED}  Cannot delete source file safely.${NC}"
-        VERIFICATION_FAILED=true
-    else
+    # Check if Ollama model exists (match with :latest or any tag)
+    model_exists=false
+    if ollama list | grep -q "^${model_name}:"; then
         echo -e "${GREEN}✓ Ollama model exists: $model_name${NC}"
+        model_exists=true
+    else
+        echo -e "${YELLOW}⚠ Ollama model NOT found: $model_name${NC}"
+        echo -e "${YELLOW}  Skipping this file (model was not created).${NC}"
     fi
 
     # Check if source file exists
     if [ ! -f "$full_gguf_path" ]; then
         echo -e "${YELLOW}⚠ Source file already deleted: $(basename "$gguf_path")${NC}"
-    else
+    elif [ "$model_exists" = true ]; then
+        # Only add to deletion list if both model exists AND file exists
         file_size=$(get_file_size "$full_gguf_path")
         file_size_gb=$(echo "scale=2; $file_size / 1024 / 1024 / 1024" | bc)
         echo -e "${CYAN}  Source file exists: $(basename "$gguf_path") (${file_size_gb} GB)${NC}"
+        echo -e "${GREEN}  → Will be deleted${NC}"
         ESTIMATED_SPACE=$((ESTIMATED_SPACE + file_size))
         FILES_TO_DELETE+=("$full_gguf_path:$model_name:$description:$file_size")
+    else
+        # File exists but model doesn't - keep the file
+        file_size=$(get_file_size "$full_gguf_path")
+        file_size_gb=$(echo "scale=2; $file_size / 1024 / 1024 / 1024" | bc)
+        echo -e "${CYAN}  Source file exists: $(basename "$gguf_path") (${file_size_gb} GB)${NC}"
+        echo -e "${YELLOW}  → Keeping file (model not imported)${NC}"
     fi
     echo ""
 done
 
-if [ "$VERIFICATION_FAILED" = true ]; then
-    echo -e "${RED}================================================${NC}"
-    echo -e "${RED}VERIFICATION FAILED!${NC}"
-    echo -e "${RED}================================================${NC}"
-    echo -e "${RED}Some Ollama models are missing.${NC}"
-    echo -e "${YELLOW}Please ensure all models were created successfully.${NC}"
-    exit 1
-fi
+# Note: We removed the VERIFICATION_FAILED check since we now gracefully skip files
+# whose models don't exist, rather than failing entirely
 
 if [ ${#FILES_TO_DELETE[@]} -eq 0 ]; then
     echo -e "${GREEN}================================================${NC}"
@@ -158,14 +161,17 @@ if [ ${#FILES_TO_DELETE[@]} -eq 0 ]; then
 fi
 
 echo -e "${GREEN}================================================${NC}"
-echo -e "${GREEN}✓ All verifications passed!${NC}"
+echo -e "${GREEN}✓ Verification complete!${NC}"
 echo -e "${GREEN}================================================${NC}"
 echo ""
 
 # Show summary
 estimated_space_gb=$(echo "scale=2; $ESTIMATED_SPACE / 1024 / 1024 / 1024" | bc)
-echo -e "${CYAN}Files to delete: ${#FILES_TO_DELETE[@]}${NC}"
+echo -e "${CYAN}Files ready to delete: ${#FILES_TO_DELETE[@]}${NC}"
 echo -e "${CYAN}Total space to free: ${estimated_space_gb} GB${NC}"
+echo ""
+echo -e "${YELLOW}Note: Only deleting files whose Ollama models were successfully created.${NC}"
+echo -e "${YELLOW}Files for non-imported models will be kept safe.${NC}"
 echo ""
 
 # Step 2: Confirmation (unless --force or --dry-run)
@@ -207,8 +213,8 @@ for file_info in "${FILES_TO_DELETE[@]}"; do
         echo -e "  ${YELLOW}[DRY RUN] Would delete: $(basename "$full_path") (${file_size_gb} GB)${NC}"
         DELETED_COUNT=$((DELETED_COUNT + 1))
     else
-        # Double-check model still exists
-        if ! ollama list | grep -q "^${model_name} "; then
+        # Double-check model still exists (match with :latest or any tag)
+        if ! ollama list | grep -q "^${model_name}:"; then
             echo -e "  ${RED}ERROR: Ollama model no longer found!${NC}"
             echo -e "  ${RED}Skipping deletion for safety.${NC}"
         else

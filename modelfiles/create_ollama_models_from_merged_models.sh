@@ -131,8 +131,8 @@ delete_source_file() {
 
     echo -e "  ${CYAN}Verifying Ollama model before deletion...${NC}"
 
-    # Verify the Ollama model exists
-    if ! ollama list | grep -q "^${model_name} "; then
+    # Verify the Ollama model exists (match with :latest or any tag)
+    if ! ollama list | grep -q "^${model_name}:"; then
         echo -e "  ${RED}ERROR: Ollama model not found in 'ollama list'${NC}"
         echo -e "  ${RED}Skipping deletion for safety.${NC}"
         return 1
