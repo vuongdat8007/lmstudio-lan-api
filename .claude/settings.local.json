@@ -20,7 +20,8 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git rm:*)",
-      "Bash(./create_ollama_models_from_merged_models.sh:*)"
+      "Bash(./create_ollama_models_from_merged_models.sh:*)",
+      "Bash(./cleanup_merged_sources.sh:*)"
     ],
     "deny": [],
     "ask": []
