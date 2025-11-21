@@ -185,7 +185,7 @@ async def get_metrics(request: Request) -> Dict[str, Any]:
                 timeout=10.0
             )
 
-            if response.status_code == 404:
+            if response.status_code in (404, 501):
                 return {
                     "llama_server_running": True,
                     "model": manager.current_model.model_id if manager.current_model else None,
