@@ -142,7 +142,10 @@ async def list_models_endpoint(request: Request) -> dict:
     Returns:
         Model list response compatible with collector-copilot
     """
+    from .model_registry import ModelRegistry
+
     manager: LlamaServerManager = request.app.state.process_manager
+    registry: ModelRegistry = request.app.state.model_registry
 
     loaded_model = None
     loaded_models = []
@@ -159,10 +162,22 @@ async def list_models_endpoint(request: Request) -> dict:
         loaded_model = manager.current_model.model_id
         loaded_models.append(model_info)
 
+    # Get all available models from registry
+    downloaded_models = []
+    for model in registry.list_models():
+        is_loaded = manager.current_model and model.model_id == manager.current_model.model_id
+        downloaded_models.append({
+            "id": model.model_id,
+            "name": model.name,
+            "description": model.description or "",
+            "path": model.path,
+            "loaded": is_loaded
+        })
+
     return {
         "loaded_model": loaded_model,
         "loaded_models": loaded_models,
-        "downloaded_models": loaded_models,  # Same as loaded for now
+        "downloaded_models": downloaded_models,
         "success": True,
         "error": None
     }
