@@ -10,20 +10,112 @@
 
 ❌ **Issues:**
 - Gateway returning 503 errors: "llama-server is not running (status: stopped)"
-- External llama-server is running on port 8080 (conflicts with gateway)
+- Gateway can't find llama-server binary
+- llama-server is inside AMD Strix Halo toolbox
 - Docker app at 10.0.0.102 getting 503 errors
-- No model loaded through gateway admin API
 
 ## Root Cause
 
-The gateway is designed to **manage llama-server as a subprocess**. It needs full control to:
-- Start llama-server with specific models
-- Stop/restart when switching models
-- Monitor health and status
+You followed the [AMD Strix Halo toolboxes setup](https://github.com/kyuz0/amd-strix-halo-toolboxes), which installs `llama-server` inside a Fedora toolbox (vulkan-toolbox or rocm-toolbox). The gateway running on the host can't find the binary inside the toolbox.
 
-Your external llama-server running on port 8080 prevents the gateway from starting its own managed instance.
+## Quick Resolution (Recommended)
 
-## Resolution Steps
+Run the gateway **inside the same toolbox** where llama-server is installed.
+
+**On your AMD AI machine (10.0.0.181):**
+
+```bash
+cd /home/boxwoodtech/lmstudio-lan-api
+
+# Make the script executable
+chmod +x start_in_toolbox.sh
+
+# Option 1: Interactive mode - choose when prompted
+./start_in_toolbox.sh
+
+# Option 2: Specify Vulkan directly
+./start_in_toolbox.sh vulkan
+
+# Option 3: Specify ROCm directly
+./start_in_toolbox.sh rocm
+```
+
+This script will:
+1. Detect available toolboxes (llama-vulkan-radv and llama-rocm-7.1-rocwmma)
+2. Let you choose between them (or auto-select if only one available)
+3. Stop any running llama-server
+4. Install Python dependencies if needed
+5. Start the gateway inside the chosen toolbox
+
+**Vulkan vs ROCm:**
+- **Vulkan (recommended)**: Faster, better compatibility, lower VRAM usage
+- **ROCm**: Native AMD compute, full GPU features
+
+**That's it!** The gateway will now be able to find and manage llama-server.
+
+---
+
+## Manual Setup (If you prefer)
+
+### Step 0: Run Gateway in Toolbox
+
+**IMPORTANT:** The gateway needs to know where your `llama-server` binary is located.
+
+**On your AMD AI machine (10.0.0.181), run:**
+
+```bash
+# Make the script executable
+chmod +x find_llama_server.sh
+
+# Run it to locate llama-server
+./find_llama_server.sh
+```
+
+This will search for `llama-server` and show you the full path. Common locations:
+- `/usr/local/bin/llama-server`
+- `/usr/bin/llama-server`
+- `$HOME/.local/bin/llama-server`
+- `$HOME/llama.cpp/build/bin/llama-server`
+
+**Once you find it, update `.env` file:**
+
+```bash
+# Edit .env
+nano .env
+
+# Update this line with the full path:
+LLAMA_SERVER_BINARY=/full/path/to/llama-server
+
+# For example:
+# LLAMA_SERVER_BINARY=/usr/local/bin/llama-server
+# or
+# LLAMA_SERVER_BINARY=/home/yourusername/llama.cpp/build/bin/llama-server
+```
+
+**Then restart the gateway:**
+
+```bash
+# Stop current gateway (Ctrl+C)
+# Start it again
+./start_gateway.sh
+```
+
+**If llama-server is NOT installed**, you need to build llama.cpp:
+
+```bash
+# Clone llama.cpp
+git clone https://github.com/ggerganov/llama.cpp.git
+cd llama.cpp
+
+# Build with Vulkan support (recommended for AMD)
+make LLAMA_VULKAN=1
+
+# Or build with ROCm support
+make LLAMA_HIPBLAS=1 AMDGPU_TARGETS=gfx1100
+
+# The binary will be in: ./llama-server
+# Copy it to a system location or update .env with full path
+```
 
 ### Step 1: Stop External llama-server
 
