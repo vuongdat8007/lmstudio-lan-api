@@ -219,43 +219,45 @@ async def get_metrics(request: Request) -> Dict[str, Any]:
 
 
 @router.get("/slots")
-async def get_slots(request: Request) -> Any:
+async def get_slots(request: Request) -> Dict[str, Any]:
     """
-    Proxy llama-server slots information.
+    Get llama-server slots information.
 
     Returns:
-        Slot information from llama-server
+        Slot information or empty response if not running
     """
-    logger.debug("Proxying slots endpoint")
+    logger.debug("Getting slots")
 
     try:
         manager: LlamaServerManager = request.app.state.process_manager
 
-        # Check if llama-server is running
         if manager.status != ProcessStatus.RUNNING:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="llama-server is not running"
+            return {
+                "llama_server_running": False,
+                "slots": [],
+                "message": "llama-server is not running - load a model first"
+            }
+
+        try:
+            http_client: httpx.AsyncClient = request.app.state.http_client
+            response = await http_client.get(
+                f"{settings.llama_server_base_url}/slots",
+                timeout=10.0
             )
+            response.raise_for_status()
+            return {
+                "llama_server_running": True,
+                "slots": response.json(),
+                "message": None
+            }
+        except httpx.RequestError as e:
+            logger.warning(f"Failed to fetch slots: {e}")
+            return {
+                "llama_server_running": True,
+                "slots": [],
+                "message": f"Failed to fetch slots: {str(e)}"
+            }
 
-        # Proxy to llama-server /slots
-        http_client: httpx.AsyncClient = request.app.state.http_client
-        response = await http_client.get(
-            f"{settings.llama_server_base_url}/slots",
-            timeout=10.0
-        )
-
-        response.raise_for_status()
-        return response.json()
-
-    except HTTPException:
-        raise
-    except httpx.RequestError as e:
-        logger.exception(f"Error proxying slots: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to get slots from llama-server: {str(e)}"
-        )
     except Exception as e:
         logger.exception(f"Error getting slots: {e}")
         raise HTTPException(
@@ -265,43 +267,45 @@ async def get_slots(request: Request) -> Any:
 
 
 @router.get("/props")
-async def get_props(request: Request) -> Any:
+async def get_props(request: Request) -> Dict[str, Any]:
     """
-    Proxy llama-server properties.
+    Get llama-server properties.
 
     Returns:
-        Server properties from llama-server
+        Server properties or empty response if not running
     """
-    logger.debug("Proxying props endpoint")
+    logger.debug("Getting props")
 
     try:
         manager: LlamaServerManager = request.app.state.process_manager
 
-        # Check if llama-server is running
         if manager.status != ProcessStatus.RUNNING:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="llama-server is not running"
+            return {
+                "llama_server_running": False,
+                "props": None,
+                "message": "llama-server is not running - load a model first"
+            }
+
+        try:
+            http_client: httpx.AsyncClient = request.app.state.http_client
+            response = await http_client.get(
+                f"{settings.llama_server_base_url}/props",
+                timeout=10.0
             )
+            response.raise_for_status()
+            return {
+                "llama_server_running": True,
+                "props": response.json(),
+                "message": None
+            }
+        except httpx.RequestError as e:
+            logger.warning(f"Failed to fetch props: {e}")
+            return {
+                "llama_server_running": True,
+                "props": None,
+                "message": f"Failed to fetch props: {str(e)}"
+            }
 
-        # Proxy to llama-server /props
-        http_client: httpx.AsyncClient = request.app.state.http_client
-        response = await http_client.get(
-            f"{settings.llama_server_base_url}/props",
-            timeout=10.0
-        )
-
-        response.raise_for_status()
-        return response.json()
-
-    except HTTPException:
-        raise
-    except httpx.RequestError as e:
-        logger.exception(f"Error proxying props: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to get props from llama-server: {str(e)}"
-        )
     except Exception as e:
         logger.exception(f"Error getting props: {e}")
         raise HTTPException(
