@@ -1,0 +1,4 @@
+FROM /home/boxwoodtech/models/unsloth/Qwen3-Coder-30B-A3B-Instruct-1M-GGUF/Qwen3-Coder-30B-A3B-Instruct-1M-BF16.gguf
+
+PARAMETER temperature 0.3
+PARAMETER num_ctx 131072
